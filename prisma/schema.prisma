@@ -1,0 +1,574 @@
+// Lead -> Launch data model.
+//
+// PORTABILITY: this schema is written to run unchanged on SQLite (local dev,
+// no server required) and PostgreSQL (production). To move to Postgres, change
+// `provider` below to "postgresql" and point DATABASE_URL at the cluster.
+// That is the only edit required, which is why this file avoids Postgres-only
+// features (native enums, scalar lists, Json columns) and stores structured
+// payloads as JSON text through the typed helpers in src/lib/json.ts.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+
+}
+
+// ---------------------------------------------------------------- tenancy
+
+model Workspace {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+
+  users         User[]
+  campaigns     Campaign[]
+  businesses    Business[]
+  prospects     Prospect[]
+  aiJobs        AIJob[]
+  aiConfigs     AIProviderConfig[]
+  activities    Activity[]
+  tasks         Task[]
+  tags          Tag[]
+  settings      Setting[]
+  savedViews    SavedView[]
+  projects      WebsiteProject[]
+  notifications Notification[]
+}
+
+model User {
+  id          String   @id @default(cuid())
+  email       String   @unique
+  name        String
+  role        String   @default("owner") // owner | member | viewer
+  workspaceId String
+  createdAt   DateTime @default(now())
+
+  workspace Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  notes     Note[]
+  prospects Prospect[]
+
+  @@index([workspaceId])
+}
+
+// ---------------------------------------------------------------- discovery
+
+model Campaign {
+  id          String  @id @default(cuid())
+  workspaceId String
+  name        String
+  status      String  @default("draft") // draft | running | completed | failed | cancelled
+  provider    String
+  isMock      Boolean @default(true)
+
+  // query definition
+  category      String
+  country       String  @default("India")
+  city          String
+  area          String?
+  targetCount   Int     @default(25)
+  minRating     Float?
+  minReviews    Int?
+  websiteFilter String  @default("any") // any | none | poor | good
+  keywords      String?
+
+  // run bookkeeping (all counters are actual, never decorative)
+  discovered  Int       @default(0)
+  duplicates  Int       @default(0)
+  enriched    Int       @default(0)
+  audited     Int       @default(0)
+  error       String?
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  workspace  Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  businesses Business[]
+  prospects  Prospect[]
+
+  @@index([workspaceId, status])
+}
+
+model Business {
+  id          String  @id @default(cuid())
+  workspaceId String
+  campaignId  String?
+
+  name        String
+  category    String
+  subcategory String?
+  description String?
+
+  address String?
+  city    String
+  area    String?
+  country String  @default("India")
+  lat     Float?
+  lng     Float?
+
+  phone     String?
+  email     String?
+  website   String?
+  googleUrl String?
+  instagram String?
+  facebook  String?
+  linkedin  String?
+
+  rating      Float?
+  reviewCount Int?
+
+  hoursJson    String? // JSON: Record<weekday, string>
+  servicesJson String? // JSON: string[]
+  imagesJson   String? // JSON: string[]
+  logoUrl      String?
+
+  source       String // provider id that produced this record
+  isMock       Boolean  @default(true)
+  externalId   String?
+  dedupeKey    String
+  discoveredAt DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  campaign  Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  prospect  Prospect?
+
+  @@unique([workspaceId, dedupeKey])
+  @@index([workspaceId, city])
+}
+
+// ---------------------------------------------------------------- prospecting
+
+model Prospect {
+  id          String  @id @default(cuid())
+  workspaceId String
+  businessId  String  @unique
+  campaignId  String?
+
+  stage    String  @default("discovered")
+  priority String  @default("normal") // low | normal | high
+  ownerId  String?
+
+  estimatedValue Int?
+  serviceType    String?
+  leadSource     String?
+
+  opportunityScore    Int?
+  contactabilityScore Int?
+  websiteScore        Int?
+
+  lastContactAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  business  Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  campaign  Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  owner     User?     @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+
+  audits        WebsiteAudit[]
+  opportunities Opportunity[]
+  competitors   Competitor[]
+  projects      WebsiteProject[]
+  messages      OutreachMessage[]
+  activities    Activity[]
+  tasks         Task[]
+  notes         Note[]
+  tags          ProspectTag[]
+
+  @@index([workspaceId, stage])
+  @@index([workspaceId, opportunityScore])
+}
+
+// ---------------------------------------------------------------- auditing
+
+model WebsiteAudit {
+  id         String  @id @default(cuid())
+  prospectId String
+  url        String?
+
+  status String  @default("queued") // queued | running | complete | failed | skipped
+  engine String // fetch-heuristic | lighthouse | mock
+  isMock Boolean @default(false)
+
+  httpStatus Int?
+  https      Boolean?
+  loadMs     Int?
+  pageBytes  Int?
+  redirected Boolean?
+  finalUrl   String?
+
+  scorePerformance   Int?
+  scoreAccessibility Int?
+  scoreBestPractices Int?
+  scoreSeo           Int?
+  scoreUx            Int?
+  scoreTechnical     Int?
+  scoreOverall       Int?
+
+  signalsJson String? // JSON: AuditSignals
+  error       String?
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  prospect Prospect       @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  findings AuditFinding[]
+
+  @@index([prospectId])
+}
+
+model AuditFinding {
+  id      String @id @default(cuid())
+  auditId String
+
+  category       String // technical | ux | seo | performance | accessibility | content
+  severity       String // critical | high | medium | low | info
+  title          String
+  whatIsWrong    String
+  whyItMatters   String
+  recommendation String
+  effort         String // low | medium | high
+  impact         String // low | medium | high
+  evidence       String?
+  source         String  @default("heuristic") // heuristic | ai | lighthouse
+
+  audit WebsiteAudit @relation(fields: [auditId], references: [id], onDelete: Cascade)
+
+  @@index([auditId])
+}
+
+model Opportunity {
+  id         String @id @default(cuid())
+  prospectId String
+
+  score          Int
+  tier           String // immediate | high-value | quick-win | emerging | low
+  labelsJson     String // JSON: string[]
+  reasonsJson    String // JSON: OpportunityReason[]
+  breakdownJson  String // JSON: Record<factor, {raw,weight,weighted}>
+  salesAngleJson String? // JSON: SalesAngle, present once AI analysis has run
+  generatedBy    String   @default("rules") // rules | ai:<provider>
+  createdAt      DateTime @default(now())
+
+  prospect Prospect @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+
+  @@index([prospectId])
+}
+
+model Competitor {
+  id         String @id @default(cuid())
+  prospectId String
+
+  name         String
+  website      String?
+  rating       Float?
+  reviewCount  Int?
+  websiteScore Int?
+  verified     Boolean  @default(false)
+  notesJson    String?
+  source       String
+  createdAt    DateTime @default(now())
+
+  prospect Prospect @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+
+  @@index([prospectId])
+}
+
+// ---------------------------------------------------------------- website studio
+
+model WebsiteProject {
+  id          String @id @default(cuid())
+  workspaceId String
+  prospectId  String
+
+  slug      String
+  path      String // filesystem path of the isolated project workspace
+  stack     String   @default("next-ts-tailwind")
+  status    String   @default("brief") // brief | queued | building | ready | failed | deployed
+  briefJson String? // JSON: WebsiteBrief
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workspace   Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  prospect    Prospect         @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  builds      WebsiteBuild[]
+  versions    WebsiteVersion[]
+  deployments Deployment[]
+
+  @@unique([workspaceId, slug])
+  @@index([prospectId])
+}
+
+model WebsiteBuild {
+  id        String @id @default(cuid())
+  projectId String
+
+  status    String  @default("queued") // queued | planning | building | testing | reviewing | complete | failed
+  stage     String?
+  provider  String?
+  model     String?
+  iteration Int     @default(1)
+
+  qualityScore Int?
+  reportJson   String? // JSON: QualityReport
+  logText      String?
+  error        String?
+  startedAt    DateTime  @default(now())
+  completedAt  DateTime?
+
+  project  WebsiteProject   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  versions WebsiteVersion[]
+
+  @@index([projectId])
+}
+
+model WebsiteVersion {
+  id        String  @id @default(cuid())
+  projectId String
+  buildId   String?
+
+  version      Int
+  label        String?
+  changesJson  String? // JSON: string[]
+  filesJson    String? // JSON: {path, bytes}[]
+  qualityScore Int?
+  reportJson   String?
+  provider     String?
+  model        String?
+  createdAt    DateTime @default(now())
+
+  project     WebsiteProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  build       WebsiteBuild?  @relation(fields: [buildId], references: [id], onDelete: SetNull)
+  deployments Deployment[]
+
+  @@unique([projectId, version])
+}
+
+model Deployment {
+  id        String  @id @default(cuid())
+  projectId String
+  versionId String?
+
+  provider      String // vercel | netlify | none
+  environment   String    @default("preview") // preview | production
+  status        String    @default("pending") // pending | building | ready | failed | cancelled
+  previewUrl    String?
+  productionUrl String?
+  error         String?
+  logText       String?
+  createdAt     DateTime  @default(now())
+  completedAt   DateTime?
+
+  project WebsiteProject  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  version WebsiteVersion? @relation(fields: [versionId], references: [id], onDelete: SetNull)
+
+  @@index([projectId])
+}
+
+// ---------------------------------------------------------------- AI layer
+
+model AIProviderConfig {
+  id          String @id @default(cuid())
+  workspaceId String
+
+  capability       String // research | classification | summarization | analysis | copywriting | vision | websitePlanning | codeGeneration | codeReview
+  provider         String
+  model            String
+  fallbackProvider String?
+  fallbackModel    String?
+  enabled          Boolean  @default(true)
+  updatedAt        DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, capability])
+}
+
+model AIJob {
+  id          String @id @default(cuid())
+  workspaceId String
+
+  type       String // audit.analyze | opportunity.analyze | outreach.draft | website.brief | website.build | visual.qa | research
+  capability String
+  status     String  @default("queued") // queued | running | complete | failed | cancelled
+  provider   String?
+  model      String?
+  isMock     Boolean @default(true)
+
+  entityType String?
+  entityId   String?
+
+  inputJson  String?
+  outputJson String?
+  error      String?
+  attempts   Int     @default(0)
+
+  tokensIn   Int?
+  tokensOut  Int?
+  costUsd    Float?
+  durationMs Int?
+
+  createdAt   DateTime  @default(now())
+  startedAt   DateTime?
+  completedAt DateTime?
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, status])
+  @@index([entityType, entityId])
+}
+
+// ---------------------------------------------------------------- outreach + CRM
+
+model OutreachMessage {
+  id         String @id @default(cuid())
+  prospectId String
+
+  channel      String // email | whatsapp | instagram | linkedin | generic
+  variant      String  @default("normal") // short | normal | detailed | followup1 | followup2 | final
+  subject      String?
+  body         String
+  status       String  @default("draft") // draft | approved | sent | replied | bounced | opted-out
+  sequenceStep Int     @default(0)
+
+  observationsJson String? // JSON: string[] of grounded observations used
+  provider         String?
+  model            String?
+  aiJobId          String?
+
+  approvedAt DateTime?
+  sentAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  prospect Prospect        @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  events   OutreachEvent[]
+
+  @@index([prospectId])
+}
+
+model OutreachEvent {
+  id        String @id @default(cuid())
+  messageId String
+
+  type   String // created | approved | sent | delivered | opened | replied | failed | opted-out
+  detail String?
+  at     DateTime @default(now())
+
+  message OutreachMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+}
+
+model Activity {
+  id          String  @id @default(cuid())
+  workspaceId String
+  prospectId  String?
+
+  type     String
+  message  String
+  metaJson String?
+  at       DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  prospect  Prospect? @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, at])
+  @@index([prospectId, at])
+}
+
+model Task {
+  id          String  @id @default(cuid())
+  workspaceId String
+  prospectId  String?
+
+  title       String
+  kind        String    @default("manual") // manual | suggested
+  status      String    @default("open") // open | done | dismissed
+  dueAt       DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  prospect  Prospect? @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, status])
+}
+
+model Tag {
+  id          String @id @default(cuid())
+  workspaceId String
+  name        String
+  color       String @default("slate")
+
+  workspace Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  prospects ProspectTag[]
+
+  @@unique([workspaceId, name])
+}
+
+model ProspectTag {
+  prospectId String
+  tagId      String
+
+  prospect Prospect @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  tag      Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([prospectId, tagId])
+}
+
+model Note {
+  id         String   @id @default(cuid())
+  prospectId String
+  authorId   String?
+  body       String
+  createdAt  DateTime @default(now())
+
+  prospect Prospect @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  author   User?    @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([prospectId])
+}
+
+model Setting {
+  id          String @id @default(cuid())
+  workspaceId String
+  key         String
+  valueJson   String
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, key])
+}
+
+model SavedView {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  scope       String   @default("prospects")
+  configJson  String
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, scope, name])
+}
+
+model Notification {
+  id          String @id @default(cuid())
+  workspaceId String
+
+  type      String
+  title     String
+  body      String?
+  level     String    @default("info") // info | success | warning | error
+  link      String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, readAt])
+}

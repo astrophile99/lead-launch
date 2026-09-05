@@ -1,0 +1,238 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   Lead -> Launch design system.
+
+   A working tool, not a marketing site: dense tables, calm surfaces, one
+   accent reserved for actions and one signal ramp reserved for scores. Warm
+   neutrals rather than blue-grey, so status colour reads clearly against them.
+--------------------------------------------------------------------------- */
+
+:root {
+  color-scheme: light;
+
+  --paper: #fbfaf8;
+  --surface: #ffffff;
+  --surface-2: #f4f2ee;
+  --surface-3: #eceae4;
+  --line: #e2dfd8;
+  --line-strong: #cfcbc1;
+
+  --ink: #1a1815;
+  --ink-2: #55504a;
+  --ink-3: #857f76;
+  --ink-4: #a9a29a;
+
+  --accent: #1d5c4f;
+  --accent-hover: #17493f;
+  --accent-ink: #ffffff;
+  --accent-soft: #e4efeb;
+
+  --danger: #a3341f;
+  --danger-soft: #fbeae6;
+  --warn: #8a5a05;
+  --warn-soft: #fcf1dc;
+  --ok: #1f6b45;
+  --ok-soft: #e5f1ea;
+  --info: #2b4f80;
+  --info-soft: #e8eef8;
+
+  --focus: #1d5c4f;
+
+  --shadow-sm: 0 1px 2px rgb(26 24 21 / 0.05);
+  --shadow-md: 0 2px 8px -2px rgb(26 24 21 / 0.1), 0 1px 3px rgb(26 24 21 / 0.06);
+  --shadow-lg: 0 16px 40px -12px rgb(26 24 21 / 0.24);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --paper: #12110f;
+  --surface: #1a1917;
+  --surface-2: #211f1c;
+  --surface-3: #2a2724;
+  --line: #322e2a;
+  --line-strong: #453f39;
+
+  --ink: #f2efe9;
+  --ink-2: #b8b1a7;
+  --ink-3: #8c857b;
+  --ink-4: #6b645b;
+
+  --accent: #52a48f;
+  --accent-hover: #66b7a2;
+  --accent-ink: #0e1a17;
+  --accent-soft: #1b2f2a;
+
+  --danger: #e0705a;
+  --danger-soft: #331d18;
+  --warn: #d4a04a;
+  --warn-soft: #2f2617;
+  --ok: #5eb583;
+  --ok-soft: #172a20;
+  --info: #7ba3dd;
+  --info-soft: #1a2333;
+
+  --focus: #52a48f;
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 2px 8px -2px rgb(0 0 0 / 0.5), 0 1px 3px rgb(0 0 0 / 0.4);
+  --shadow-lg: 0 16px 40px -12px rgb(0 0 0 / 0.7);
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-ink-4: var(--ink-4);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+
+  --font-sans: var(--font-app-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-app-mono), ui-monospace, SFMono-Regular, monospace;
+
+  --shadow-panel: var(--shadow-sm);
+  --shadow-raised: var(--shadow-md);
+  --shadow-overlay: var(--shadow-lg);
+}
+
+* {
+  border-color: var(--line);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-app-sans), ui-sans-serif, system-ui, sans-serif;
+  font-size: 13.5px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "cv05" 1, "ss01" 1;
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Numeric columns must align. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* Small caps label used throughout the chrome. */
+.label {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.hairline {
+  border-bottom: 1px solid var(--line);
+}
+
+/* Scrollbars: present, but quiet. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 6px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@keyframes ll-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes ll-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes ll-scale-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes ll-indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(280%);
+  }
+}
+
+.anim-enter {
+  animation: ll-fade-up 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.anim-fade {
+  animation: ll-fade 0.18s ease both;
+}
+.anim-pop {
+  animation: ll-scale-in 0.16s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
