@@ -3,7 +3,7 @@ import { appConfig } from "@/config/app";
 import { prisma } from "@/db/client";
 import { getWorkspaceContext } from "@/db/workspace";
 import { fromJson } from "@/lib/json";
-import { formatDateTime, relativeTime } from "@/lib/utils";
+import { formatDateTime } from "@/lib/utils";
 import { messagingHealth } from "@/providers/messaging";
 import { listVoices } from "@/services/voice";
 import { QueryTabs } from "@/components/ui/Tabs";
@@ -196,7 +196,6 @@ export default async function OutreachPage({ searchParams }: PageProps<"/outreac
                           <MessageActions
                             messageId={m.id}
                             status={m.status}
-                            channel={m.channel}
                             canTransmit={canTransmit}
                             transmitReason={
                               channelHealth?.manualOnly

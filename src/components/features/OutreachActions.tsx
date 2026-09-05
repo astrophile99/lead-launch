@@ -26,14 +26,13 @@ type Err = { message: string; remedy: string } | null;
 export function MessageActions({
   messageId,
   status,
-  channel,
   canTransmit,
   transmitReason,
 }: {
   messageId: string;
   status: string;
-  channel: string;
   canTransmit: boolean;
+  /** Why this channel can or cannot transmit, shown when it cannot. */
   transmitReason: string;
 }) {
   const router = useRouter();

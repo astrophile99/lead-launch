@@ -20,7 +20,6 @@ import {
   Field,
   InfoNote,
   Input,
-  MockBadge,
   Panel,
   PanelHeader,
   Segmented,

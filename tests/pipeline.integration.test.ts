@@ -359,7 +359,9 @@ describe("outreach", () => {
     const approved = await s.prisma.outreachMessage.findUnique({ where: { id: messageId } });
     expect(approved!.status).toBe("approved");
     // No RESEND_API_KEY in the test environment, so nothing may be sent.
-    await expect(s.sendMessage(workspaceId, messageId)).rejects.toThrow(/not configured|email provider/i);
+    await expect(s.sendMessage(workspaceId, messageId)).rejects.toThrow(
+      /no email transport is configured/i,
+    );
     const after = await s.prisma.outreachMessage.findUnique({ where: { id: messageId } });
     expect(after!.status).toBe("approved");
     expect(after!.sentAt).toBeNull();

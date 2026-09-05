@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { auditManyAction, bulkTagAction, exportProspectsCsvAction } from "@/app/actions";
-import { PIPELINE_STAGES, STAGE_META, type PipelineStage } from "@/config/pipeline";
+import { PIPELINE_STAGES, STAGE_META } from "@/config/pipeline";
 import type { ProspectFilters, ProspectRow, ProspectSort } from "@/services/prospects";
 import { useToast } from "@/components/ui/Toast";
 import {

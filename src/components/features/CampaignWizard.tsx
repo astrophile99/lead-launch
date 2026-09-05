@@ -15,7 +15,6 @@ import {
   Input,
   Panel,
   Progress,
-  Segmented,
   Select,
 } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";

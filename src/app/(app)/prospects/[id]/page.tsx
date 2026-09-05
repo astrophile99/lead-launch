@@ -30,6 +30,12 @@ import {
   type FindingRow,
 } from "@/components/features/AuditReport";
 import {
+  buildPresence,
+  CompetitorCompare,
+  DigitalPresenceGrid,
+} from "@/components/features/DigitalPresence";
+import { SequenceButton } from "@/components/features/OutreachActions";
+import {
   DraftOutreachControls,
   NoteComposer,
   OptOutButton,
@@ -291,42 +297,26 @@ export default async function ProspectPage({
 
         {/* ------------------------------------------------------------- presence */}
         {tab === "presence" ? (
-          <div className="grid gap-5 lg:grid-cols-2">
-            <Panel>
-              <PanelHeader title="Channels" hint="Only what is actually on record." />
-              <dl className="px-4 py-3 text-[12.5px]">
-                {[
-                  ["Website", b.website],
-                  ["Google listing", b.googleUrl],
-                  ["Instagram", b.instagram],
-                  ["Facebook", b.facebook],
-                  ["LinkedIn", b.linkedin],
-                  ["Phone", b.phone],
-                  ["Email", b.email],
-                ].map(([k, v]) => (
-                  <div key={k as string} className="flex gap-4 py-1.5 border-b border-line last:border-0">
-                    <dt className="text-ink-3 w-28 shrink-0">{k}</dt>
-                    <dd className="min-w-0 break-all">
-                      {v ? (
-                        String(v).startsWith("http") ? (
-                          <a href={v as string} target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">
-                            {v as string}
-                          </a>
-                        ) : (
-                          <span className="text-ink-2">{v as string}</span>
-                        )
-                      ) : (
-                        <span className="text-ink-4">not on record</span>
-                      )}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            </Panel>
+          <div className="flex flex-col gap-5">
+            <DigitalPresenceGrid
+              channels={buildPresence({
+                website: b.website,
+                googleUrl: b.googleUrl,
+                instagram: b.instagram,
+                facebook: b.facebook,
+                linkedin: b.linkedin,
+                email: b.email,
+                phone: b.phone,
+                source: b.source,
+              })}
+            />
 
             {signals ? (
               <Panel>
-                <PanelHeader title="What the site actually contains" hint="Observed, not inferred." />
+                <PanelHeader
+                  title="What the site actually contains"
+                  hint="Observed during the audit, not inferred."
+                />
                 <SignalsPanel signals={signals} />
               </Panel>
             ) : (
@@ -516,36 +506,24 @@ export default async function ProspectPage({
 
         {/* ---------------------------------------------------------- competitors */}
         {tab === "competitors" ? (
-          <Panel>
-            <PanelHeader
-              title="Competitor intelligence"
-              hint="Only verified records are used in briefs or messages."
-            />
-            {prospect.competitors.length === 0 ? (
-              <div className="p-4">
-                <InfoNote>
-                  No competitor data has been collected for this prospect. Competitor discovery needs
-                  a business-data provider that can search by category and locality — configure{" "}
-                  <code>GOOGLE_PLACES_API_KEY</code> or <code>SERPAPI_API_KEY</code> and rerun
-                  discovery. Nothing is invented here: an empty list means nothing was verified.
-                </InfoNote>
-              </div>
-            ) : (
-              <ul>
-                {prospect.competitors.map((c) => (
-                  <li key={c.id} className="px-4 py-3 border-b border-line last:border-0 flex items-center gap-3">
-                    <div className="min-w-0 flex-1">
-                      <p className="text-[12.5px] text-ink font-medium">{c.name}</p>
-                      <p className="text-[11.5px] text-ink-3">{c.website ?? "no website on record"}</p>
-                    </div>
-                    <span className="tabular text-[12px] text-ink-2">{c.rating ?? "—"}★</span>
-                    <ScoreBadge score={c.websiteScore} />
-                    {c.verified ? <Badge tone="ok">verified</Badge> : <Badge tone="warn">unverified</Badge>}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Panel>
+          <CompetitorCompare
+            prospect={{
+              name: b.name,
+              rating: b.rating,
+              reviewCount: b.reviewCount,
+              websiteScore: prospect.websiteScore,
+              hasWebsite: Boolean(b.website),
+            }}
+            competitors={prospect.competitors.map((c) => ({
+              id: c.id,
+              name: c.name,
+              website: c.website,
+              rating: c.rating,
+              reviewCount: c.reviewCount,
+              websiteScore: c.websiteScore,
+              verified: c.verified,
+            }))}
+          />
         ) : null}
 
         {/* ------------------------------------------------------------- concept */}
@@ -629,10 +607,16 @@ export default async function ProspectPage({
                 title="Draft a message"
                 hint="Every draft is written only from observations recorded in the audit."
               />
-              <div className="px-4 py-3">
+              <div className="px-4 py-3 flex flex-wrap items-center gap-3">
                 <DraftOutreachControls
                   prospectId={prospect.id}
                   canDraft={Boolean(audit && audit.status === "complete")}
+                />
+                <SequenceButton
+                  prospectId={prospect.id}
+                  channel={b.email ? "email" : "whatsapp"}
+                  disabled={!audit || audit.status !== "complete"}
+                  disabledReason="Run the audit first — drafts are grounded in recorded observations."
                 />
               </div>
             </Panel>

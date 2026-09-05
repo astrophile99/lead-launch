@@ -1,7 +1,6 @@
 import Link from "next/link";
 import {
   AI_CAPABILITIES,
-  CAPABILITY_META,
   DEFAULT_ROUTING,
   MODEL_CATALOG,
   type AICapability,
