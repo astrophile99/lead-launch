@@ -21,12 +21,20 @@ import {
   recordReply,
   sendMessage,
 } from "@/services/outreach";
-import { updateSettings } from "@/services/settings";
+import { getSettings, updateSettings } from "@/services/settings";
 import { completeTask } from "@/services/tasks";
 import { generateBrief, updateBrief } from "@/services/website-brief";
 import { restoreVersion, startBuild } from "@/services/website-projects";
 import { readProjectFile } from "@/agents/website-builder";
-import type { WebsiteBrief } from "@/types";
+import { estimateCost } from "@/services/costs";
+import { getIntegrationGroups } from "@/services/integrations";
+import { listOptOuts, optOutBusiness, recordOptOut, removeOptOut } from "@/services/optouts";
+import { getMessagingProvider } from "@/providers/messaging";
+import { resolveRoute } from "@/providers/ai/router";
+import { analyseStyle, deleteVoice, saveVoice, type Voice } from "@/services/voice";
+import { refineMessage } from "@/services/outreach-refine";
+import type { AIProviderId } from "@/config/ai";
+import type { OutreachChannel, WebsiteBrief } from "@/types";
 
 /**
  * The only place the UI mutates state.
@@ -680,5 +688,431 @@ export async function deleteViewAction(id: string): Promise<ActionResult> {
     await prisma.savedView.deleteMany({ where: { id, workspaceId } });
     revalidatePath("/prospects");
     return undefined;
+  });
+}
+
+/* ------------------------------------------------------------- integrations */
+
+export async function testIntegrationAction(
+  itemId: string,
+): Promise<ActionResult<{ ok: boolean; detail: string }>> {
+  return act(async (workspaceId) => {
+    // Messaging transports know how to verify themselves against the live API.
+    const messaging = ["resend", "whatsapp-cloud", "instagram-graph"];
+    if (messaging.includes(itemId)) {
+      const channel: OutreachChannel =
+        itemId === "resend" ? "email" : itemId === "whatsapp-cloud" ? "whatsapp" : "instagram";
+      const result = await getMessagingProvider(channel).testConnection(workspaceId);
+      revalidatePath("/settings");
+      return result;
+    }
+
+    if (itemId === "database") {
+      // A real round-trip, not a config read: the one check that can prove the
+      // connection rather than infer it.
+      const started = Date.now();
+      await prisma.$queryRaw`SELECT 1`;
+      return { ok: true, detail: `Query round-trip in ${Date.now() - started}ms.` };
+    }
+
+    if (itemId === "lighthouse-psi") {
+      const key = process.env.PAGESPEED_API_KEY;
+      if (!key) return { ok: false, detail: "PAGESPEED_API_KEY is not set." };
+      const res = await fetch(
+        `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=https%3A%2F%2Fexample.com&key=${encodeURIComponent(key)}&category=performance`,
+      );
+      return res.ok
+        ? { ok: true, detail: "PageSpeed accepted the key." }
+        : { ok: false, detail: `PageSpeed returned HTTP ${res.status}.` };
+    }
+
+    if (itemId === "google-places") {
+      const key = process.env.GOOGLE_PLACES_API_KEY;
+      if (!key) return { ok: false, detail: "GOOGLE_PLACES_API_KEY is not set." };
+      const res = await fetch("https://places.googleapis.com/v1/places:searchText", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "X-Goog-Api-Key": key,
+          "X-Goog-FieldMask": "places.id",
+        },
+        body: JSON.stringify({ textQuery: "coffee", pageSize: 1 }),
+      });
+      return res.ok
+        ? { ok: true, detail: "Places accepted the key." }
+        : { ok: false, detail: `Places returned HTTP ${res.status}. Check the key restrictions.` };
+    }
+
+    if (itemId === "vercel") {
+      const token = process.env.VERCEL_TOKEN;
+      if (!token) return { ok: false, detail: "VERCEL_TOKEN is not set." };
+      const res = await fetch("https://api.vercel.com/v2/user", {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return { ok: false, detail: `Vercel returned HTTP ${res.status}.` };
+      const data = (await res.json()) as { user?: { username?: string } };
+      return { ok: true, detail: `Authenticated as ${data.user?.username ?? "unknown user"}.` };
+    }
+
+    if (["anthropic", "openai", "gemini"].includes(itemId)) {
+      const key =
+        itemId === "anthropic"
+          ? process.env.ANTHROPIC_API_KEY
+          : itemId === "openai"
+            ? process.env.OPENAI_API_KEY
+            : process.env.GEMINI_API_KEY;
+      if (!key) return { ok: false, detail: `No key configured for ${itemId}.` };
+
+      // Deliberately a metadata call, not a completion: testing a connection
+      // should never cost the user money.
+      const url =
+        itemId === "anthropic"
+          ? "https://api.anthropic.com/v1/models"
+          : itemId === "openai"
+            ? "https://api.openai.com/v1/models"
+            : `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(key)}`;
+      const headers: Record<string, string> =
+        itemId === "anthropic"
+          ? { "x-api-key": key, "anthropic-version": "2023-06-01" }
+          : itemId === "openai"
+            ? { authorization: `Bearer ${key}` }
+            : {};
+
+      const res = await fetch(url, { headers });
+      return res.ok
+        ? { ok: true, detail: "The key was accepted." }
+        : { ok: false, detail: `Provider returned HTTP ${res.status}.` };
+    }
+
+    return {
+      ok: false,
+      detail: "This integration has no automated test. Verify its configuration by hand.",
+    };
+  });
+}
+
+export async function listIntegrationsAction() {
+  return act(async (workspaceId) => getIntegrationGroups(workspaceId));
+}
+
+/* ---------------------------------------------------------------- WhatsApp */
+
+const whatsappSchema = z.object({
+  metaAppId: z.string().trim().max(64).nullable().optional(),
+  businessAccountId: z.string().trim().max(64).nullable().optional(),
+  phoneNumberId: z.string().trim().max(64).nullable().optional(),
+  displayPhoneNumber: z.string().trim().max(32).nullable().optional(),
+  apiVersion: z
+    .string()
+    .trim()
+    .regex(/^v\d+\.\d+$/, "Use a Graph API version such as v21.0")
+    .default("v21.0"),
+  webhookVerifyToken: z.string().trim().max(120).nullable().optional(),
+});
+
+export async function saveWhatsAppAction(raw: unknown): Promise<ActionResult> {
+  return act(async (workspaceId) => {
+    const input = whatsappSchema.parse(raw);
+    const data = {
+      metaAppId: input.metaAppId || null,
+      businessAccountId: input.businessAccountId || null,
+      phoneNumberId: input.phoneNumberId || null,
+      displayPhoneNumber: input.displayPhoneNumber || null,
+      apiVersion: input.apiVersion,
+      webhookVerifyToken: input.webhookVerifyToken || null,
+      tokenConfigured: Boolean(process.env.WHATSAPP_ACCESS_TOKEN),
+      // Saving configuration is not a connection. Only a passing test is.
+      status: "not-configured",
+      lastError: null,
+    };
+    await prisma.whatsAppAccount.upsert({
+      where: { workspaceId },
+      create: { workspaceId, ...data },
+      update: data,
+    });
+    revalidatePath("/settings");
+    return undefined;
+  });
+}
+
+/* --------------------------------------------------------------- Instagram */
+
+const instagramSchema = z.object({
+  metaAppId: z.string().trim().max(64).nullable().optional(),
+  igBusinessId: z.string().trim().max(64).nullable().optional(),
+  pageId: z.string().trim().max(64).nullable().optional(),
+  username: z.string().trim().max(64).nullable().optional(),
+});
+
+export async function saveInstagramAction(raw: unknown): Promise<ActionResult> {
+  return act(async (workspaceId) => {
+    const input = instagramSchema.parse(raw);
+    const data = {
+      metaAppId: input.metaAppId || null,
+      igBusinessId: input.igBusinessId || null,
+      pageId: input.pageId || null,
+      username: input.username?.replace(/^@/, "") || null,
+      tokenConfigured: Boolean(process.env.INSTAGRAM_ACCESS_TOKEN),
+      status: "not-configured",
+      lastError: null,
+    };
+    await prisma.instagramAccount.upsert({
+      where: { workspaceId },
+      create: { workspaceId, ...data },
+      update: data,
+    });
+    revalidatePath("/settings");
+    return undefined;
+  });
+}
+
+/* ------------------------------------------------------------------- voice */
+
+const voiceSchema = z.object({
+  id: z.string().optional(),
+  name: z.string().trim().min(1).max(60),
+  isDefault: z.boolean(),
+  tone: z.enum([
+    "professional",
+    "friendly",
+    "casual",
+    "direct",
+    "premium",
+    "consultative",
+    "bold",
+  ]),
+  length: z.enum(["short", "medium", "detailed"]),
+  salesIntensity: z.enum(["soft", "balanced", "direct"]),
+  formality: z.enum(["low", "medium", "high"]),
+  personality: z.array(z.string().max(40)).max(8),
+  customInstructions: z.string().max(1200).nullable(),
+  exampleMessages: z.array(z.string().max(4000)).max(10),
+});
+
+export async function saveVoiceAction(raw: unknown): Promise<ActionResult<{ id: string }>> {
+  return act(async (workspaceId) => {
+    const input = voiceSchema.parse(raw);
+    const voice = await saveVoice(
+      workspaceId,
+      input as Omit<Voice, "id" | "analysis" | "analysedAt"> & { id?: string },
+    );
+    revalidatePath("/outreach");
+    revalidatePath("/settings");
+    return { id: voice.id };
+  });
+}
+
+export async function deleteVoiceAction(id: string): Promise<ActionResult> {
+  return act(async (workspaceId) => {
+    await deleteVoice(workspaceId, id);
+    revalidatePath("/outreach");
+    return undefined;
+  });
+}
+
+export async function analyseStyleAction(
+  voiceId: string,
+  samples: string[],
+): Promise<ActionResult<{ isMock: boolean; summary: string }>> {
+  return act(async (workspaceId) => {
+    const clean = z.array(z.string().max(4000)).max(10).parse(samples);
+    const { profile, isMock } = await analyseStyle(workspaceId, voiceId, clean);
+    revalidatePath("/outreach");
+    return { isMock, summary: profile.summary };
+  });
+}
+
+/* --------------------------------------------------------- outreach revise */
+
+export async function refineMessageAction(
+  messageId: string,
+  refinement: string,
+): Promise<ActionResult<{ changed: string; isMock: boolean }>> {
+  return act(async (workspaceId) => {
+    const parsed = z
+      .enum(["shorten", "warmer", "more-direct", "less-salesy", "use-my-voice", "regenerate"])
+      .parse(refinement);
+    const result = await refineMessage(workspaceId, messageId, parsed);
+    revalidatePath("/outreach");
+    return { changed: result.changed, isMock: result.isMock };
+  });
+}
+
+export async function draftSequenceAction(
+  prospectId: string,
+  channel: string,
+): Promise<ActionResult<{ created: number; failed: number }>> {
+  return act(async (workspaceId) => {
+    const ch = z
+      .enum(["email", "whatsapp", "instagram", "linkedin", "generic"])
+      .parse(channel) as OutreachChannel;
+
+    let created = 0;
+    let failed = 0;
+    // Sequential on purpose: each draft is a paid model call, and a partial
+    // sequence is more useful than a burst that trips a rate limit.
+    for (const variant of ["normal", "followup1", "followup2", "final"] as const) {
+      try {
+        await draftOutreach(workspaceId, prospectId, ch, variant);
+        created++;
+      } catch {
+        failed++;
+      }
+    }
+    revalidatePath(`/prospects/${prospectId}`);
+    revalidatePath("/outreach");
+    return { created, failed };
+  });
+}
+
+/* ---------------------------------------------------------------- opt-outs */
+
+export async function recordOptOutAction(
+  channel: string,
+  identifier: string,
+  reason?: string,
+): Promise<ActionResult> {
+  return act(async (workspaceId) => {
+    const ch = z
+      .enum(["email", "whatsapp", "instagram", "linkedin", "generic", "all"])
+      .parse(channel);
+    await recordOptOut(workspaceId, ch, identifier, { reason, source: "manual" });
+    revalidatePath("/settings");
+    revalidatePath("/outreach");
+    return undefined;
+  });
+}
+
+export async function removeOptOutAction(id: string): Promise<ActionResult> {
+  return act(async (workspaceId) => {
+    await removeOptOut(workspaceId, id);
+    revalidatePath("/settings");
+    return undefined;
+  });
+}
+
+export async function listOptOutsAction() {
+  return act(async (workspaceId) => {
+    const rows = await listOptOuts(workspaceId);
+    return rows.map((r) => ({
+      id: r.id,
+      channel: r.channel,
+      identifier: r.identifier,
+      reason: r.reason,
+      at: r.at.toISOString(),
+    }));
+  });
+}
+
+/* --------------------------------------------------------------- workspace */
+
+export async function updateWorkspaceAction(patch: {
+  name?: string;
+  currency?: string;
+  timezone?: string;
+}): Promise<ActionResult> {
+  return act(async (workspaceId) => {
+    const parsed = z
+      .object({
+        name: z.string().trim().min(1).max(80).optional(),
+        currency: z.string().trim().length(3).optional(),
+        timezone: z.string().trim().max(64).optional(),
+      })
+      .parse(patch);
+    await prisma.workspace.update({ where: { id: workspaceId }, data: parsed });
+    revalidatePath("/settings");
+    revalidatePath("/");
+    return undefined;
+  });
+}
+
+export async function dismissSetupStepAction(stepId: string): Promise<ActionResult> {
+  return act(async (workspaceId) => {
+    const settings = await getSettings(workspaceId);
+    await updateSettings(workspaceId, {
+      dismissedSetupSteps: [...new Set([...settings.dismissedSetupSteps, stepId])],
+    });
+    revalidatePath("/");
+    return undefined;
+  });
+}
+
+/* -------------------------------------------------------------- estimation */
+
+export async function estimateCampaignCostAction(input: {
+  prospectCount: number;
+  autoAudit: boolean;
+  autoAnalyse: boolean;
+}): Promise<
+  ActionResult<{
+    lowUsd: number | null;
+    highUsd: number | null;
+    calls: number;
+    assumptions: string[];
+    priced: boolean;
+  }>
+> {
+  return act(async (workspaceId) => {
+    const parsed = z
+      .object({
+        prospectCount: z.coerce.number().int().min(1).max(200),
+        autoAudit: z.boolean(),
+        autoAnalyse: z.boolean(),
+      })
+      .parse(input);
+
+    const analysis = await resolveRoute(workspaceId, "analysis");
+
+    const tasks: { type: string; count: number; provider: AIProviderId; model: string }[] = [];
+    if (parsed.autoAnalyse) {
+      tasks.push({
+        type: "opportunity.analyze",
+        count: parsed.prospectCount,
+        provider: analysis.provider.id,
+        model: analysis.model,
+      });
+    }
+
+    const estimate = estimateCost(tasks);
+    // Auditing costs no tokens: it is an HTTP fetch plus local parsing.
+    if (parsed.autoAudit) {
+      estimate.assumptions.push(
+        `${parsed.prospectCount} website audits — no AI tokens; one HTTP request each.`,
+      );
+    }
+    if (tasks.length === 0) {
+      estimate.assumptions.push("No AI calls selected, so this campaign costs nothing to run.");
+    }
+    return estimate;
+  });
+}
+
+/**
+ * Marks a prospect not interested and records a permanent opt-out for every
+ * identifier they expose, so a later campaign cannot re-add and re-contact them.
+ */
+export async function optOutProspectAction(
+  prospectId: string,
+): Promise<ActionResult<{ recorded: number }>> {
+  return act(async (workspaceId) => {
+    const prospect = await prisma.prospect.findFirst({
+      where: { id: prospectId, workspaceId },
+      include: { business: true },
+    });
+    if (!prospect) throw toAppError(new Error("Prospect not found."));
+
+    await optOut(workspaceId, prospectId);
+    const recorded = await optOutBusiness(
+      workspaceId,
+      {
+        email: prospect.business.email,
+        phone: prospect.business.phone,
+        instagram: prospect.business.instagram,
+      },
+      "Marked not interested",
+    );
+    revalidatePath(`/prospects/${prospectId}`);
+    revalidatePath("/outreach");
+    return { recorded };
   });
 }

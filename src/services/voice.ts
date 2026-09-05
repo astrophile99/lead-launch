@@ -1,6 +1,15 @@
 import { prisma } from "@/db/client";
 import { AppError } from "@/lib/errors";
 import { fromJson, toJson } from "@/lib/json";
+import {
+  FORMALITIES,
+  LENGTH_HINT,
+  TONE_HINT,
+  type VoiceFormality,
+  type VoiceIntensity,
+  type VoiceLength,
+  type VoiceTone,
+} from "@/config/outreach";
 import { factsBlock, jsonParser, runAIJob } from "./ai-jobs";
 
 /**
@@ -12,44 +21,19 @@ import { factsBlock, jsonParser, runAIJob } from "./ai-jobs";
  * actually wrote.
  */
 
-export const TONES = [
-  "professional",
-  "friendly",
-  "casual",
-  "direct",
-  "premium",
-  "consultative",
-  "bold",
-] as const;
-export type Tone = (typeof TONES)[number];
+export {
+  TONES,
+  LENGTHS,
+  INTENSITIES,
+  FORMALITIES,
+  PERSONALITIES,
+  TONE_HINT,
+} from "@/config/outreach";
 
-export const LENGTHS = ["short", "medium", "detailed"] as const;
-export type Length = (typeof LENGTHS)[number];
-
-export const INTENSITIES = ["soft", "balanced", "direct"] as const;
-export type Intensity = (typeof INTENSITIES)[number];
-
-export const FORMALITIES = ["low", "medium", "high"] as const;
-export type Formality = (typeof FORMALITIES)[number];
-
-export const PERSONALITIES = [
-  "confident",
-  "warm",
-  "observant",
-  "founder-like",
-  "technical",
-  "minimal",
-] as const;
-
-export const TONE_HINT: Record<Tone, string> = {
-  professional: "Measured and competent. Complete sentences, no slang.",
-  friendly: "Warm and human, still concise. Reads like a person, not a brand.",
-  casual: "Relaxed and plain. Contractions, short sentences.",
-  direct: "Gets to the point in the first line. No preamble.",
-  premium: "Understated and precise. Confidence without adjectives.",
-  consultative: "Advisory. Leads with the observation, not the offer.",
-  bold: "Opinionated. States what is wrong plainly.",
-};
+export type Tone = VoiceTone;
+export type Length = VoiceLength;
+export type Intensity = VoiceIntensity;
+export type Formality = VoiceFormality;
 
 /** The derived fingerprint of somebody's writing, from "Learn my style". */
 export type StyleProfile = {
@@ -320,7 +304,7 @@ export async function analyseStyle(
 export function voiceInstructions(voice: Voice): string {
   const lines: string[] = [
     `Tone: ${voice.tone}. ${TONE_HINT[voice.tone] ?? ""}`,
-    `Length: ${voice.length === "short" ? "under 60 words" : voice.length === "detailed" ? "120-180 words" : "70-110 words"}.`,
+    `Length: ${LENGTH_HINT[voice.length]}.`,
     `Sales intensity: ${voice.salesIntensity}. ${
       voice.salesIntensity === "soft"
         ? "Make the ask easy to ignore."
