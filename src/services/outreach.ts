@@ -7,7 +7,9 @@ import { factsBlock, jsonParser, runAIJob } from "./ai-jobs";
 import { logActivity, notify } from "./activity";
 import { getSettings } from "./settings";
 import { latestOpportunity, refreshSuggestedTask } from "./opportunity";
-import { getOutreachProvider } from "@/providers/outreach";
+import { getMessagingProvider } from "@/providers/messaging";
+import { assertNotOptedOut } from "./optouts";
+import { getActiveVoice, voiceInstructions } from "./voice";
 
 /**
  * Outreach generation and dispatch.
@@ -40,6 +42,14 @@ Absolute rules:
 
 Return a single JSON object: { "subject": string|null, "body": string, "observations": string[] }
 where observations lists exactly which supplied facts you used.`;
+
+/** The system prompt, with the workspace's voice folded in. */
+function systemFor(voice: string): string {
+  return `${SYSTEM}
+
+--- How this sender writes ---
+${voice}`;
+}
 
 /** Assembles the grounded observation list from stored audit findings. */
 export async function observationsFor(prospectId: string): Promise<string[]> {
@@ -102,6 +112,7 @@ export async function draftOutreach(
   }
 
   const settings = await getSettings(workspaceId);
+  const voice = await getActiveVoice(workspaceId);
   const opportunity = await latestOpportunity(prospectId);
   const angle = opportunity?.salesAngle as SalesAngle | null;
   const observations = await observationsFor(prospectId);
@@ -133,6 +144,10 @@ export async function draftOutreach(
     senderRole: settings.senderRole,
     maxChars: limits.maxChars,
     channelNote: limits.note,
+    voiceTone: voice.tone,
+    voiceLength: voice.length,
+    voicePersonality: voice.personality,
+    voiceInstructions: voice.customInstructions,
   };
 
   const outcome = await runAIJob<OutreachDraft>({
@@ -143,7 +158,7 @@ export async function draftOutreach(
     entityId: prospectId,
     inputSummary: { businessName: prospect.business.name, channel, variant },
     request: {
-      system: SYSTEM,
+      system: systemFor(voiceInstructions(voice)),
       json: true,
       temperature: 0.6,
       maxTokens: 1200,
@@ -190,6 +205,7 @@ export async function draftOutreach(
       provider: outcome.provider,
       model: outcome.model,
       aiJobId: outcome.jobId,
+      voiceId: voice.id === "builtin" ? null : voice.id,
     },
   });
 
@@ -289,13 +305,15 @@ export async function sendMessage(workspaceId: string, messageId: string) {
   }
 
   await assertWithinRateLimit(workspaceId);
+  await assertNotOptedOut(workspaceId, message.channel as OutreachChannel, message.prospect.business);
 
-  const provider = getOutreachProvider(message.channel as OutreachChannel);
-  const result = await provider.send({
+  const provider = getMessagingProvider(message.channel as OutreachChannel);
+  const result = await provider.send(workspaceId, {
     to: {
       email: message.prospect.business.email,
       phone: message.prospect.business.phone,
       handle: message.prospect.business.instagram,
+      externalId: null,
       name: message.prospect.business.name,
     },
     subject: message.subject,
@@ -307,16 +325,17 @@ export async function sendMessage(workspaceId: string, messageId: string) {
     await prisma.outreachEvent.create({
       data: { messageId, type: "failed", detail: result.detail },
     });
+    const health = await provider.health(workspaceId);
     throw new AppError({
       kind: "not-configured",
       message: result.detail,
-      remedy: provider.setupHint,
+      remedy: health.setupHint,
     });
   }
 
   const updated = await prisma.outreachMessage.update({
     where: { id: messageId },
-    data: { status: "sent", sentAt: new Date() },
+    data: { status: "sent", sentAt: new Date(), externalId: result.externalId },
   });
   await prisma.outreachEvent.create({
     data: { messageId, type: "sent", detail: `${provider.id}: ${result.detail}` },

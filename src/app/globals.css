@@ -3,81 +3,107 @@
 /* ---------------------------------------------------------------------------
    Lead -> Launch design system.
 
-   A working tool, not a marketing site: dense tables, calm surfaces, one
-   accent reserved for actions and one signal ramp reserved for scores. Warm
-   neutrals rather than blue-grey, so status colour reads clearly against them.
+   Dark-first. A tool that is open all day should not glare. Surfaces are near
+   -neutral with a trace of warmth so the orange accent sits on them without
+   vibrating; orange is reserved for actions, selection, progress and
+   opportunity, never for decoration.
+
+   Radii stay small (3-6px). Elevation is carried by borders first and shadow
+   second, which keeps dense tables legible instead of floaty.
 --------------------------------------------------------------------------- */
 
 :root {
-  color-scheme: light;
-
-  --paper: #fbfaf8;
-  --surface: #ffffff;
-  --surface-2: #f4f2ee;
-  --surface-3: #eceae4;
-  --line: #e2dfd8;
-  --line-strong: #cfcbc1;
-
-  --ink: #1a1815;
-  --ink-2: #55504a;
-  --ink-3: #857f76;
-  --ink-4: #a9a29a;
-
-  --accent: #1d5c4f;
-  --accent-hover: #17493f;
-  --accent-ink: #ffffff;
-  --accent-soft: #e4efeb;
-
-  --danger: #a3341f;
-  --danger-soft: #fbeae6;
-  --warn: #8a5a05;
-  --warn-soft: #fcf1dc;
-  --ok: #1f6b45;
-  --ok-soft: #e5f1ea;
-  --info: #2b4f80;
-  --info-soft: #e8eef8;
-
-  --focus: #1d5c4f;
-
-  --shadow-sm: 0 1px 2px rgb(26 24 21 / 0.05);
-  --shadow-md: 0 2px 8px -2px rgb(26 24 21 / 0.1), 0 1px 3px rgb(26 24 21 / 0.06);
-  --shadow-lg: 0 16px 40px -12px rgb(26 24 21 / 0.24);
-}
-
-:root[data-theme="dark"] {
   color-scheme: dark;
 
-  --paper: #12110f;
-  --surface: #1a1917;
-  --surface-2: #211f1c;
-  --surface-3: #2a2724;
-  --line: #322e2a;
-  --line-strong: #453f39;
+  /* surfaces, darkest to lightest */
+  --paper: #0a0b0d;
+  --surface: #111317;
+  --surface-2: #16191e;
+  --surface-3: #1d2026;
+  --surface-4: #24282f;
+  --line: #22262c;
+  --line-strong: #31363f;
 
-  --ink: #f2efe9;
-  --ink-2: #b8b1a7;
-  --ink-3: #8c857b;
-  --ink-4: #6b645b;
+  /* text, strongest to weakest */
+  --ink: #eceef2;
+  --ink-2: #a6acb7;
+  --ink-3: #79808c;
+  --ink-4: #565c67;
 
-  --accent: #52a48f;
-  --accent-hover: #66b7a2;
-  --accent-ink: #0e1a17;
-  --accent-soft: #1b2f2a;
+  /* the single accent */
+  --accent: #ff6a1f;
+  --accent-hover: #ff8442;
+  --accent-active: #e85a12;
+  --accent-ink: #16100a;
+  --accent-soft: #2b1a0f;
+  --accent-line: #57331b;
 
-  --danger: #e0705a;
-  --danger-soft: #331d18;
-  --warn: #d4a04a;
-  --warn-soft: #2f2617;
-  --ok: #5eb583;
-  --ok-soft: #172a20;
-  --info: #7ba3dd;
-  --info-soft: #1a2333;
+  /* status - muted, used sparingly */
+  --ok: #3fb27f;
+  --ok-soft: #10241c;
+  --ok-line: #1e4536;
+  --warn: #d9a441;
+  --warn-soft: #26200f;
+  --warn-line: #4a3d1c;
+  --danger: #ec6a5e;
+  --danger-soft: #2a1614;
+  --danger-line: #4f2723;
+  --info: #5b9dd9;
+  --info-soft: #12202c;
+  --info-line: #234152;
 
-  --focus: #52a48f;
+  --focus: #ff8442;
 
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
-  --shadow-md: 0 2px 8px -2px rgb(0 0 0 / 0.5), 0 1px 3px rgb(0 0 0 / 0.4);
-  --shadow-lg: 0 16px 40px -12px rgb(0 0 0 / 0.7);
+  --shadow-md: 0 4px 12px -4px rgb(0 0 0 / 0.5), 0 1px 3px rgb(0 0 0 / 0.35);
+  --shadow-lg: 0 18px 44px -14px rgb(0 0 0 / 0.72);
+
+  --r-sm: 3px;
+  --r-md: 5px;
+  --r-lg: 8px;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --paper: #fafafb;
+  --surface: #ffffff;
+  --surface-2: #f4f5f7;
+  --surface-3: #eaecf0;
+  --surface-4: #dfe2e7;
+  --line: #e4e6ea;
+  --line-strong: #ccd0d7;
+
+  --ink: #14161a;
+  --ink-2: #4c535e;
+  --ink-3: #757c88;
+  --ink-4: #9aa1ac;
+
+  --accent: #d1541a;
+  --accent-hover: #b8460f;
+  --accent-active: #a03d0c;
+  --accent-ink: #ffffff;
+  --accent-soft: #fdf1e9;
+  --accent-line: #f0cdb5;
+
+  --ok: #1c7a52;
+  --ok-soft: #e8f5ef;
+  --ok-line: #bfe3d3;
+  --warn: #8a6410;
+  --warn-soft: #fcf4e2;
+  --warn-line: #ecdcb4;
+  --danger: #b3372b;
+  --danger-soft: #fdeceb;
+  --danger-line: #f2c8c4;
+  --info: #245e91;
+  --info-soft: #eaf2f9;
+  --info-line: #c5dcee;
+
+  --focus: #d1541a;
+
+  --shadow-sm: 0 1px 2px rgb(16 20 28 / 0.05);
+  --shadow-md: 0 4px 12px -4px rgb(16 20 28 / 0.1), 0 1px 3px rgb(16 20 28 / 0.06);
+  --shadow-lg: 0 18px 44px -14px rgb(16 20 28 / 0.24);
 }
 
 @theme inline {
@@ -85,27 +111,41 @@
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
   --color-surface-3: var(--surface-3);
+  --color-surface-4: var(--surface-4);
   --color-line: var(--line);
   --color-line-strong: var(--line-strong);
+
   --color-ink: var(--ink);
   --color-ink-2: var(--ink-2);
   --color-ink-3: var(--ink-3);
   --color-ink-4: var(--ink-4);
+
   --color-accent: var(--accent);
   --color-accent-hover: var(--accent-hover);
+  --color-accent-active: var(--accent-active);
   --color-accent-ink: var(--accent-ink);
   --color-accent-soft: var(--accent-soft);
-  --color-danger: var(--danger);
-  --color-danger-soft: var(--danger-soft);
-  --color-warn: var(--warn);
-  --color-warn-soft: var(--warn-soft);
+  --color-accent-line: var(--accent-line);
+
   --color-ok: var(--ok);
   --color-ok-soft: var(--ok-soft);
+  --color-ok-line: var(--ok-line);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-warn-line: var(--warn-line);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-danger-line: var(--danger-line);
   --color-info: var(--info);
   --color-info-soft: var(--info-soft);
+  --color-info-line: var(--info-line);
 
   --font-sans: var(--font-app-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-app-mono), ui-monospace, SFMono-Regular, monospace;
+
+  --radius-sm: var(--r-sm);
+  --radius-md: var(--r-md);
+  --radius-lg: var(--r-lg);
 
   --shadow-panel: var(--shadow-sm);
   --shadow-raised: var(--shadow-md);
@@ -128,7 +168,9 @@ body {
   font-size: 13.5px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   font-feature-settings: "cv05" 1, "ss01" 1;
+  overscroll-behavior-y: none;
 }
 
 ::selection {
@@ -142,23 +184,32 @@ body {
   border-radius: 2px;
 }
 
-/* Numeric columns must align. */
+/* Numeric columns must align, or a table of scores is unreadable. */
 .tabular {
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum" 1;
 }
 
-/* Small caps label used throughout the chrome. */
+/* The small-caps label used throughout the chrome. */
 .label {
   font-size: 10.5px;
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.075em;
   text-transform: uppercase;
   color: var(--ink-3);
 }
 
-.hairline {
-  border-bottom: 1px solid var(--line);
+/* Screen-reader-only, for labels that must exist but not display. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
 }
 
 /* Scrollbars: present, but quiet. */
@@ -176,9 +227,24 @@ body {
   background-clip: content-box;
   border-radius: 6px;
 }
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-4);
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
 *::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* Safe-area helpers for the mobile bottom bar. */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.mb-safe {
+  margin-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* ------------------------------------------------------------------ motion */
 
 @keyframes ll-fade-up {
   from {
@@ -198,7 +264,7 @@ body {
     opacity: 1;
   }
 }
-@keyframes ll-scale-in {
+@keyframes ll-pop {
   from {
     opacity: 0;
     transform: translateY(-4px) scale(0.985);
@@ -208,12 +274,46 @@ body {
     transform: none;
   }
 }
-@keyframes ll-indeterminate {
-  0% {
-    transform: translateX(-100%);
+@keyframes ll-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
   }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes ll-slide-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes ll-shimmer {
+  from {
+    background-position: -180% 0;
+  }
+  to {
+    background-position: 180% 0;
+  }
+}
+@keyframes ll-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes ll-pulse-dot {
+  0%,
   100% {
-    transform: translateX(280%);
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
   }
 }
 
@@ -224,7 +324,33 @@ body {
   animation: ll-fade 0.18s ease both;
 }
 .anim-pop {
-  animation: ll-scale-in 0.16s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: ll-pop 0.16s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.anim-sheet {
+  animation: ll-slide-up 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.anim-toast {
+  animation: ll-slide-in-right 0.2s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.anim-spin {
+  animation: ll-spin 0.7s linear infinite;
+}
+.anim-live {
+  animation: ll-pulse-dot 1.6s ease-in-out infinite;
+}
+
+/* Skeletons read as "content is coming", not as a spinner sitting in a void. */
+.skeleton {
+  background:
+    linear-gradient(
+      90deg,
+      var(--surface-2) 0%,
+      var(--surface-3) 40%,
+      var(--surface-2) 80%
+    );
+  background-size: 220% 100%;
+  animation: ll-shimmer 1.4s ease-in-out infinite;
+  border-radius: var(--r-sm);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -234,5 +360,9 @@ body {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .skeleton {
+    background: var(--surface-2);
   }
 }

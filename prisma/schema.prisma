@@ -14,7 +14,6 @@ generator client {
 
 datasource db {
   provider = "sqlite"
-
 }
 
 // ---------------------------------------------------------------- tenancy
@@ -23,7 +22,11 @@ model Workspace {
   id        String   @id @default(cuid())
   name      String
   slug      String   @unique
+  logoUrl   String?
+  currency  String   @default("INR")
+  timezone  String   @default("Asia/Kolkata")
   createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
 
   users         User[]
   campaigns     Campaign[]
@@ -38,15 +41,25 @@ model Workspace {
   savedViews    SavedView[]
   projects      WebsiteProject[]
   notifications Notification[]
+  voices        OutreachVoice[]
+  optOuts       OutreachOptOut[]
+  whatsapp      WhatsAppAccount?
+  instagram     InstagramAccount?
 }
 
 model User {
-  id          String   @id @default(cuid())
-  email       String   @unique
-  name        String
-  role        String   @default("owner") // owner | member | viewer
-  workspaceId String
-  createdAt   DateTime @default(now())
+  id              String    @id @default(cuid())
+  email           String    @unique
+  name            String
+  role            String    @default("owner") // owner | member | viewer
+  avatarUrl       String?
+  /// Set once a real auth provider issues the identity. Null while the app runs
+  /// single-tenant against the seeded workspace.
+  authUserId      String?   @unique
+  emailVerifiedAt DateTime?
+  lastSeenAt      DateTime?
+  workspaceId     String
+  createdAt       DateTime  @default(now())
 
   workspace Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   notes     Note[]
@@ -286,11 +299,19 @@ model WebsiteProject {
 
   slug      String
   path      String // filesystem path of the isolated project workspace
-  stack     String   @default("next-ts-tailwind")
-  status    String   @default("brief") // brief | queued | building | ready | failed | deployed
+  stack     String  @default("next-ts-tailwind")
+  status    String  @default("brief") // brief | queued | building | ready | failed | deployed
   briefJson String? // JSON: WebsiteBrief
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+
+  /// Where the generated source lives once it leaves this machine. The local
+  /// filesystem is a build cache, never the source of truth in production.
+  repoUrl         String?
+  repoBranch      String?  @default("main")
+  lastCommitSha   String?
+  storageProvider String?
+  storagePrefix   String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   workspace   Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   prospect    Prospect         @relation(fields: [prospectId], references: [id], onDelete: Cascade)
@@ -406,10 +427,16 @@ model AIJob {
   error      String?
   attempts   Int     @default(0)
 
-  tokensIn   Int?
-  tokensOut  Int?
-  costUsd    Float?
-  durationMs Int?
+  tokensIn     Int?
+  tokensOut    Int?
+  tokensCached Int?
+  costUsd      Float?
+  currency     String @default("USD")
+  durationMs   Int?
+
+  /// Optional attribution, so spend can be reported per campaign or per build.
+  campaignId String?
+  projectId  String?
 
   createdAt   DateTime  @default(now())
   startedAt   DateTime?
@@ -438,6 +465,15 @@ model OutreachMessage {
   provider         String?
   model            String?
   aiJobId          String?
+  voiceId          String?
+
+  /// Provider-side identifiers and state, for channels that report delivery.
+  externalId    String?
+  templateName  String?
+  variablesJson String?
+  deliveredAt   DateTime?
+  readAt        DateTime?
+  failureReason String?
 
   approvedAt DateTime?
   sentAt     DateTime?
@@ -571,4 +607,155 @@ model Notification {
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@index([workspaceId, readAt])
+}
+
+// ---------------------------------------------------------------- outreach voice
+
+/// How this workspace sounds. Applied to every generated message so drafts read
+/// like the person sending them rather than like a model.
+model OutreachVoice {
+  id          String  @id @default(cuid())
+  workspaceId String
+  name        String
+  isDefault   Boolean @default(false)
+
+  tone            String // professional | friendly | casual | direct | premium | consultative | bold
+  length          String // short | medium | detailed
+  salesIntensity  String // soft | balanced | direct
+  formality       String @default("medium") // low | medium | high
+  personalityJson String // JSON: string[]
+
+  customInstructions  String?
+  /// Pasted samples the user wrote themselves, used by "Learn my style".
+  exampleMessagesJson String?
+  /// Derived style profile: sentence length, vocabulary, opener/CTA habits.
+  analysisJson        String?
+  analysedAt          DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId, isDefault])
+}
+
+// ---------------------------------------------------------------- WhatsApp
+
+/// Meta WhatsApp Business (Cloud API) connection.
+/// The access token itself is never stored here - it lives in the server-side
+/// secret store; `tokenConfigured` only records whether one is present.
+model WhatsAppAccount {
+  id          String @id @default(cuid())
+  workspaceId String @unique
+
+  metaAppId          String?
+  businessAccountId  String?
+  phoneNumberId      String?
+  displayPhoneNumber String?
+  apiVersion         String  @default("v21.0")
+  /// Compared against the hub.verify_token Meta sends on webhook registration.
+  webhookVerifyToken String?
+  tokenConfigured    Boolean @default(false)
+
+  status        String    @default("not-configured") // not-configured | connected | error
+  lastError     String?
+  lastCheckedAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  workspace Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  templates WhatsAppTemplate[]
+}
+
+/// A message template as registered with Meta. Business-initiated conversations
+/// outside the 24-hour service window may only use an approved template.
+model WhatsAppTemplate {
+  id        String @id @default(cuid())
+  accountId String
+
+  name           String
+  language       String    @default("en")
+  category       String    @default("MARKETING") // MARKETING | UTILITY | AUTHENTICATION
+  status         String    @default("unknown") // approved | pending | rejected | unknown
+  bodyText       String
+  variablesJson  String? // JSON: string[] of placeholder names, in order
+  externalId     String?
+  rejectedReason String?
+  syncedAt       DateTime?
+  createdAt      DateTime  @default(now())
+
+  account WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, name, language])
+}
+
+// ---------------------------------------------------------------- Instagram
+
+/// Meta Instagram messaging connection (Instagram Business account linked to a
+/// Facebook Page). Only official Graph API access is modelled; there is no
+/// scraping path anywhere in this application.
+model InstagramAccount {
+  id          String @id @default(cuid())
+  workspaceId String @unique
+
+  metaAppId       String?
+  igBusinessId    String?
+  pageId          String?
+  username        String?
+  permissionsJson String? // JSON: string[] granted scopes
+  tokenConfigured Boolean @default(false)
+
+  status        String    @default("not-configured") // not-configured | connected | error
+  lastError     String?
+  lastCheckedAt DateTime?
+  lastSyncAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  workspace     Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  conversations InstagramConversation[]
+}
+
+/// A thread with one Instagram user. Only what the Graph API actually returns
+/// is stored.
+model InstagramConversation {
+  id         String  @id @default(cuid())
+  accountId  String
+  prospectId String?
+
+  externalId        String
+  participantId     String?
+  participantHandle String?
+  /// Business-initiated replies are only permitted inside Meta's messaging
+  /// window; this records when it closes so the UI can say why sending is off.
+  windowExpiresAt   DateTime?
+  lastMessageAt     DateTime?
+  createdAt         DateTime  @default(now())
+
+  account InstagramAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, externalId])
+  @@index([prospectId])
+}
+
+// ---------------------------------------------------------------- compliance
+
+/// A hard block on contacting an identifier again, on any channel it applies to.
+/// Checked before every draft and every send.
+model OutreachOptOut {
+  id          String @id @default(cuid())
+  workspaceId String
+
+  channel    String // email | whatsapp | instagram | linkedin | all
+  identifier String // normalised email, phone or handle
+  reason     String?
+  source     String   @default("manual") // manual | reply | webhook
+  at         DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, channel, identifier])
+  @@index([workspaceId])
 }

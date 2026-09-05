@@ -13,6 +13,25 @@ export type WorkspaceSettings = {
   maxQaIterations: number;
   senderName: string;
   senderRole: string;
+
+  /** Budgets, in USD. Null means "no limit configured". */
+  monthlyBudgetUsd: number | null;
+  campaignBudgetUsd: number | null;
+  buildBudgetUsd: number | null;
+  /** Refuse to start new AI jobs once the monthly budget is exhausted. */
+  enforceBudget: boolean;
+
+  /** Which build quality tier the Website Studio defaults to. */
+  buildQuality: "economy" | "balanced" | "quality";
+
+  /** Which notification kinds are surfaced. */
+  notifyOnBuild: boolean;
+  notifyOnAuditFailure: boolean;
+  notifyOnReply: boolean;
+  notifyOnFollowUpDue: boolean;
+
+  /** Setup checklist items the user chose to dismiss. */
+  dismissedSetupSteps: string[];
 };
 
 const DEFAULTS: WorkspaceSettings = {
@@ -23,24 +42,21 @@ const DEFAULTS: WorkspaceSettings = {
   maxQaIterations: 3,
   senderName: "",
   senderRole: "Web developer",
-};
 
-export async function getSettings(workspaceId: string): Promise<WorkspaceSettings> {
-  const rows = await prisma.setting.findMany({ where: { workspaceId } });
-  const map = new Map(rows.map((r) => [r.key, r.valueJson]));
-  return {
-    scoringWeights: fromJson(map.get("scoring.weights"), DEFAULTS.scoringWeights),
-    costMode: fromJson(map.get("ai.costMode"), DEFAULTS.costMode),
-    discoveryProvider: fromJson(map.get("discovery.provider"), DEFAULTS.discoveryProvider),
-    outreachRequiresApproval: fromJson(
-      map.get("outreach.requiresApproval"),
-      DEFAULTS.outreachRequiresApproval,
-    ),
-    maxQaIterations: fromJson(map.get("studio.maxQaIterations"), DEFAULTS.maxQaIterations),
-    senderName: fromJson(map.get("outreach.senderName"), DEFAULTS.senderName),
-    senderRole: fromJson(map.get("outreach.senderRole"), DEFAULTS.senderRole),
-  };
-}
+  monthlyBudgetUsd: null,
+  campaignBudgetUsd: null,
+  buildBudgetUsd: null,
+  enforceBudget: true,
+
+  buildQuality: "quality",
+
+  notifyOnBuild: true,
+  notifyOnAuditFailure: true,
+  notifyOnReply: true,
+  notifyOnFollowUpDue: true,
+
+  dismissedSetupSteps: [],
+};
 
 const KEY_BY_FIELD: Record<keyof WorkspaceSettings, string> = {
   scoringWeights: "scoring.weights",
@@ -50,7 +66,44 @@ const KEY_BY_FIELD: Record<keyof WorkspaceSettings, string> = {
   maxQaIterations: "studio.maxQaIterations",
   senderName: "outreach.senderName",
   senderRole: "outreach.senderRole",
+  monthlyBudgetUsd: "budget.monthlyUsd",
+  campaignBudgetUsd: "budget.campaignUsd",
+  buildBudgetUsd: "budget.buildUsd",
+  enforceBudget: "budget.enforce",
+  buildQuality: "studio.buildQuality",
+  notifyOnBuild: "notify.build",
+  notifyOnAuditFailure: "notify.auditFailure",
+  notifyOnReply: "notify.reply",
+  notifyOnFollowUpDue: "notify.followUpDue",
+  dismissedSetupSteps: "setup.dismissed",
 };
+
+export async function getSettings(workspaceId: string): Promise<WorkspaceSettings> {
+  const rows = await prisma.setting.findMany({ where: { workspaceId } });
+  const map = new Map(rows.map((r) => [r.key, r.valueJson]));
+  const read = <K extends keyof WorkspaceSettings>(field: K): WorkspaceSettings[K] =>
+    fromJson(map.get(KEY_BY_FIELD[field]), DEFAULTS[field]);
+
+  return {
+    scoringWeights: read("scoringWeights"),
+    costMode: read("costMode"),
+    discoveryProvider: read("discoveryProvider"),
+    outreachRequiresApproval: read("outreachRequiresApproval"),
+    maxQaIterations: read("maxQaIterations"),
+    senderName: read("senderName"),
+    senderRole: read("senderRole"),
+    monthlyBudgetUsd: read("monthlyBudgetUsd"),
+    campaignBudgetUsd: read("campaignBudgetUsd"),
+    buildBudgetUsd: read("buildBudgetUsd"),
+    enforceBudget: read("enforceBudget"),
+    buildQuality: read("buildQuality"),
+    notifyOnBuild: read("notifyOnBuild"),
+    notifyOnAuditFailure: read("notifyOnAuditFailure"),
+    notifyOnReply: read("notifyOnReply"),
+    notifyOnFollowUpDue: read("notifyOnFollowUpDue"),
+    dismissedSetupSteps: read("dismissedSetupSteps"),
+  };
+}
 
 export async function updateSettings(
   workspaceId: string,
