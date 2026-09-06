@@ -10,6 +10,7 @@ import {
   Badge,
   EmptyState,
   InfoNote,
+  Meter,
   MockBadge,
   Panel,
   PanelHeader,
@@ -54,6 +55,31 @@ export default async function AuditPage({ searchParams }: PageProps<"/audit">) {
     }),
   ]);
 
+  const findingsByCategory = await prisma.auditFinding.groupBy({
+    by: ["category"],
+    where: { audit: { prospect: { workspaceId }, status: "complete" } },
+    _count: { _all: true },
+  });
+
+  // Averaged across completed audits only; a null score would drag the mean
+  // toward zero and misrepresent a portfolio that simply has not been audited.
+  const avg = (pick: (a: (typeof completed)[number]) => number | null) => {
+    const values = completed.map(pick).filter((v): v is number => v != null);
+    return values.length ? Math.round(values.reduce((x, y) => x + y, 0) / values.length) : null;
+  };
+
+  const categoryScores = [
+    { id: "performance", label: "Performance", score: avg((a) => a.scorePerformance) },
+    { id: "accessibility", label: "Accessibility", score: avg((a) => a.scoreAccessibility) },
+    { id: "seo", label: "SEO", score: avg((a) => a.scoreSeo) },
+    { id: "technical", label: "Best practices", score: avg((a) => a.scoreBestPractices) },
+    { id: "ux", label: "Mobile UX & conversion", score: avg((a) => a.scoreUx) },
+  ];
+  const overall = avg((a) => a.scoreOverall);
+  const findingCountByCategory = Object.fromEntries(
+    findingsByCategory.map((f) => [f.category, f._count._all]),
+  ) as Record<string, number>;
+
   const severity = Object.fromEntries(
     findingsBySeverity.map((f) => [f.severity, f._count._all]),
   ) as Record<string, number>;
@@ -96,7 +122,49 @@ export default async function AuditPage({ searchParams }: PageProps<"/audit">) {
 
       <div className="mt-5">
         {status === "all" ? (
-          <div className="grid gap-5 lg:grid-cols-2">
+          <>
+            <Panel className="mb-5">
+              <PanelHeader
+                title="Portfolio scores"
+                hint="Averaged across completed audits. Each category links to the prospects it is weakest on."
+                actions={<ScoreBadge score={overall} size="lg" />}
+              />
+              <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-x-5 gap-y-4 px-4 py-4">
+                {categoryScores.map((c) => (
+                  <Link
+                    key={c.id}
+                    href={`/prospects?score=weak&sort=website`}
+                    className="group"
+                    title={`See the prospects scoring worst on ${c.label.toLowerCase()}`}
+                  >
+                    <p className="label mb-1 group-hover:text-ink-2 transition-colors">{c.label}</p>
+                    <div className="flex items-baseline gap-1 mb-1.5">
+                      <span className="tabular text-[19px] font-semibold leading-none text-ink">
+                        {c.score ?? "—"}
+                      </span>
+                      <span className="text-[11px] text-ink-4">/100</span>
+                      <span className="tabular ml-auto text-[11px] text-ink-4">
+                        {findingCountByCategory[c.id] ?? 0} findings
+                      </span>
+                    </div>
+                    <Meter
+                      value={c.score ?? 0}
+                      tone={
+                        c.score == null
+                          ? "neutral"
+                          : c.score >= 75
+                            ? "ok"
+                            : c.score >= 50
+                              ? "warn"
+                              : "danger"
+                      }
+                    />
+                  </Link>
+                ))}
+              </div>
+            </Panel>
+
+            <div className="grid gap-5 lg:grid-cols-2">
             <Panel>
               <PanelHeader title="Audit engines" hint="Chosen per URL. Demo hostnames cannot be fetched." />
               <ul>
@@ -136,7 +204,8 @@ export default async function AuditPage({ searchParams }: PageProps<"/audit">) {
                 </ul>
               )}
             </Panel>
-          </div>
+            </div>
+          </>
         ) : null}
 
         {status === "pending" ? (

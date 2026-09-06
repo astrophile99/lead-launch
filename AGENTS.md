@@ -48,6 +48,36 @@ visible gap, a `skipped` status, or a refusal with instructions.
 - Tailwind classes are merged with `cn()` (clsx + tailwind-merge), so component
   defaults can be overridden by callers.
 
+## Client/server boundary
+
+A client component must never import from `src/services/` or `src/db/`. Those
+pull in Prisma, and through it `better-sqlite3` and `node:fs`, which breaks the
+build with "Can't resolve 'fs'" — and the typechecker will not catch it, only
+`npm run build` will. Shared constants belong in `src/config/`.
+
+## Channel honesty
+
+Before adding anything that sends a message, check what the platform actually
+permits:
+
+- WhatsApp cold contact is template-only, and Meta must have approved the
+  template. Free-form text is limited to the 24-hour window after they reply.
+- Instagram has no sanctioned cold-DM path at all. Replies only.
+- LinkedIn automation breaches their terms.
+
+Where sending is not permitted, the app writes the message and the human sends
+it. Do not add a workaround, and do not report a send that did not happen.
+
+Webhooks must verify `X-Hub-Signature-256` against the raw request body — parsed
+and re-serialised JSON will never match. With no `META_APP_SECRET`, reject the
+payload rather than trusting it.
+
+## Money
+
+Report cost only where a model price is configured in `src/config/ai.ts`.
+Unpriced work is counted and surfaced as unpriced; it is never treated as free
+and never blocks a job on a budget it cannot measure.
+
 ## Before you finish
 
 ```bash

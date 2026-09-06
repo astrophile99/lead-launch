@@ -21,6 +21,7 @@ import {
   Td,
   Th,
 } from "@/components/ui/primitives";
+import { BuildTimeline, parseBuildLog } from "@/components/features/BuildTimeline";
 import { SitePreview } from "@/components/features/SitePreview";
 import {
   BriefEditor,
@@ -304,10 +305,16 @@ export default async function StudioProjectPage({
                   {b.error ? (
                     <p className="px-4 py-2 text-[12px] text-danger">{b.error}</p>
                   ) : null}
+                  <BuildTimeline entries={parseBuildLog(b.logText)} status={b.status} />
                   {b.logText ? (
-                    <pre className="px-4 py-3 text-[11.5px] font-mono text-ink-2 overflow-x-auto whitespace-pre leading-relaxed max-h-72">
-                      {b.logText}
-                    </pre>
+                    <details className="px-4 pb-3">
+                      <summary className="text-[11.5px] text-ink-3 cursor-pointer hover:text-ink-2">
+                        Raw log
+                      </summary>
+                      <pre className="mt-2 text-[11px] font-mono text-ink-3 overflow-x-auto whitespace-pre leading-relaxed max-h-72 bg-surface-2 border border-line rounded-sm p-2">
+                        {b.logText}
+                      </pre>
+                    </details>
                   ) : null}
                 </Panel>
               ))
