@@ -8,6 +8,7 @@ import type { BusinessRecord, DiscoveryQuery } from "@/types";
 import { logActivity, notify } from "./activity";
 import { auditMany } from "./audit";
 import { getSettings } from "./settings";
+import { recordUsage } from "./provider-usage";
 
 /**
  * Campaign runner: DISCOVER -> DEDUPE -> PERSIST -> (optionally) AUDIT.
@@ -15,6 +16,12 @@ import { getSettings } from "./settings";
  * Counters on the Campaign row are incremented from real work only. If the
  * provider returns nothing, the campaign completes with zero and says so; it
  * never reports progress it did not make.
+ *
+ * What this deliberately does NOT do is generate a website. Discovery finds
+ * businesses and, if asked, audits them. It does not write a brief, it does not
+ * start a build, and it does not import anything that could - a build is
+ * started by a person, in a dialog, with a model and a cost estimate in front
+ * of them. A test asserts that this module has no path to `startBuild`.
  */
 
 export type CampaignInput = {
@@ -126,6 +133,9 @@ export async function runCampaign(
   let discovered = 0;
   let duplicates = 0;
   const createdProspectIds: string[] = [];
+  // Licence credit required by the source, carried through to the UI.
+  let attribution: string | null = null;
+  const providerNotes: string[] = [];
 
   try {
     let cursor: string | null = null;
@@ -135,6 +145,13 @@ export async function runCampaign(
       const remaining = campaign.targetCount - discovered;
       const result = await provider.search({ ...query, limit: remaining, cursor });
       pages++;
+
+      // One counted request per page, so the Google free allowance is a number
+      // the user can see in the AI Control Center rather than a surprise at
+      // the end of the month. Mock runs are not counted - they cost nothing.
+      if (!provider.isMock) {
+        await recordUsage(workspaceId, provider.id, { requests: 1 });
+      }
 
       if (result.records.length === 0) break;
 
@@ -152,6 +169,11 @@ export async function runCampaign(
         where: { id: campaignId },
         data: { discovered, duplicates, enriched: discovered },
       });
+
+      attribution = result.attribution ?? attribution;
+      for (const n of result.notes ?? []) {
+        if (!providerNotes.includes(n)) providerNotes.push(n);
+      }
 
       cursor = result.nextCursor;
       if (!cursor) break;
@@ -186,7 +208,13 @@ export async function runCampaign(
       message: `Campaign "${campaign.name}" found ${discovered} new prospect${discovered === 1 ? "" : "s"}${
         duplicates ? ` (${duplicates} already on file)` : ""
       }.`,
-      meta: { campaignId, provider: provider.id, isMock: provider.isMock },
+      meta: {
+        campaignId,
+        provider: provider.id,
+        isMock: provider.isMock,
+        attribution,
+        notes: providerNotes,
+      },
     });
 
     await notify({

@@ -236,6 +236,8 @@ export async function messagingHealth(workspaceId: string): Promise<MessagingHea
 }
 
 export { gmail, resend, GmailProvider };
+export { disconnectGmail, GOOGLE_SCOPES } from "./gmail";
+export type { GmailConnection } from "./gmail";
 export type {
   Eligibility,
   MessagingHealth,

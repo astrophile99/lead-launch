@@ -152,7 +152,10 @@ export function createZip(entries: ZipEntry[], at: Date = new Date()): Buffer {
     central.writeUInt32LE(body.length, 20);
     central.writeUInt32LE(raw.length, 24);
     central.writeUInt16LE(nameBuf.length, 28);
-    central.writeUInt32LE(0o100644 << 16, 38); // external attrs: rw-r--r--
+    // External attributes: Unix mode rw-r--r-- in the high word. The `>>> 0`
+    // is load-bearing — JS bitwise shifts are signed 32-bit, so `0o100644 << 16`
+    // is negative and writeUInt32LE rejects it.
+    central.writeUInt32LE((0o100644 << 16) >>> 0, 38);
     central.writeUInt32LE(offset, 42);
     nameBuf.copy(central, 46);
 

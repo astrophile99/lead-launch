@@ -1,7 +1,15 @@
 import { NextResponse } from "next/server";
 import { appConfig } from "@/config/app";
 import { prisma } from "@/db/client";
-import { acknowledge, verifySignature, verifySubscription } from "@/lib/meta-webhook";
+import {
+  acknowledge,
+  claimEvent,
+  verifySignature,
+  verifySubscription,
+  withinReplayWindow,
+} from "@/lib/meta-webhook";
+import { checkRate } from "@/lib/rate-limit";
+import { sha256 } from "@/lib/crypto";
 import { startJob } from "@/lib/logger";
 
 /**
@@ -37,7 +45,41 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const log = startJob("webhook.instagram.receive");
+
+  // Rate limit before any work. This endpoint is public by necessity, so an
+  // unauthenticated flood must cost a map lookup rather than an HMAC and a
+  // database round trip.
+  const rate = checkRate("webhook:instagram", 300, 60_000);
+  if (!rate.ok) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: {
+          code: "rate-limited",
+          message: "Too many webhook deliveries.",
+          remedy: "Meta should back off and retry.",
+          retryable: true,
+        },
+      },
+      { status: 429, headers: { "retry-after": String(rate.retryAfterSeconds) } },
+    );
+  }
+
   const raw = await request.text();
+  if (raw.length > 1_000_000) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: {
+          code: "invalid-input",
+          message: "Webhook payload too large.",
+          remedy: "This is not a payload Meta sends.",
+          retryable: false,
+        },
+      },
+      { status: 413 },
+    );
+  }
 
   if (!appConfig.whatsapp.appSecret) {
     return NextResponse.json(
@@ -56,6 +98,11 @@ export async function POST(request: Request) {
   }
 
   if (!verifySignature(raw, request.headers.get("x-hub-signature-256"))) {
+    await claimEvent("instagram", `rejected:${sha256(raw).slice(0, 32)}`, {
+      status: "rejected",
+      reason: "Signature verification failed.",
+      bytes: raw.length,
+    });
     log.warn("rejected", { reason: "bad signature" });
     return NextResponse.json(
       {
@@ -100,6 +147,31 @@ export async function POST(request: Request) {
 
       const participantId = event.sender?.id;
       if (!participantId) {
+        ignored++;
+        continue;
+      }
+
+      // Meta's own message id, so a retry does not re-open the window or
+      // notify twice. Without a mid there is nothing stable to key on, and a
+      // conversation event with no id is not one we can safely deduplicate.
+      const mid = event.message?.mid;
+      if (!mid) {
+        ignored++;
+        continue;
+      }
+      const claim = await claimEvent("instagram", mid, {
+        workspaceId: account.workspaceId,
+        status: "accepted",
+        bytes: raw.length,
+      });
+      if (!claim.fresh) {
+        ignored++;
+        continue;
+      }
+
+      if (!withinReplayWindow(event.timestamp ? event.timestamp / 1000 : null, WINDOW_MS)) {
+        // Older than the messaging window it would open: a replay, not a
+        // conversation. Accepting it would reopen a closed window.
         ignored++;
         continue;
       }

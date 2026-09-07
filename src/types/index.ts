@@ -49,6 +49,14 @@ export type DiscoveryResult = {
   /** True when the records were synthesised rather than fetched. */
   isMock: boolean;
   providerId: string;
+  /**
+   * Required credit line for this data, where the source licence demands one.
+   * OpenStreetMap is ODbL: attribution is a condition of use, not a courtesy,
+   * so it is carried on the result and rendered wherever the data is shown.
+   */
+  attribution?: string | null;
+  /** Anything the caller should know about coverage or gaps in this result. */
+  notes?: string[];
 };
 
 // --------------------------------------------------------------------- audit

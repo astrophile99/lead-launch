@@ -7,7 +7,25 @@ import { PIPELINE_STAGES } from "@/config/pipeline";
 import { SCORING_FACTORS } from "@/config/scoring";
 import { prisma } from "@/db/client";
 import { assertCanWrite, getWorkspaceContext } from "@/db/workspace";
-import { requireProjectAccess, requireVersionAccess } from "@/lib/authz";
+import {
+  requireMessageAccess,
+  requireProjectAccess,
+  requireProspectAccess,
+  requireVersionAccess,
+  requireWrite,
+} from "@/lib/authz";
+import { assertRate } from "@/lib/rate-limit";
+import { getResearch, researchWebsite } from "@/services/research";
+import { disconnectGmail, gmail, GOOGLE_SCOPES } from "@/providers/messaging";
+import {
+  approveForSend,
+  editMessage,
+  listQueue,
+  parseQueueFilters,
+  prospectTimeline,
+  retryFailed,
+  sendApproved,
+} from "@/services/outreach-queue";
 import { toAppError } from "@/lib/errors";
 import { toJson } from "@/lib/json";
 import { getDeploymentProvider } from "@/providers/deployment";
@@ -1219,5 +1237,240 @@ export async function optOutProspectAction(
     revalidatePath(`/prospects/${prospectId}`);
     revalidatePath("/outreach");
     return { recorded };
+  });
+}
+
+/* ------------------------------------------------------------------ research */
+
+/**
+ * Refreshes the crawl for one business.
+ *
+ * The explicit half of the caching rule: nothing re-fetches a site because a
+ * page was opened. `force` is only ever true because a person pressed Refresh.
+ */
+export async function refreshResearchAction(
+  prospectId: string,
+): Promise<ActionResult<{ pages: number; requests: number; changed: boolean; status: string }>> {
+  return act(async (workspaceId) => {
+    const { prospect } = await requireProspectAccess(prospectId);
+    assertRate(`research:${workspaceId}`, 30, 60_000, "research");
+
+    const { record, changed } = await researchWebsite(workspaceId, prospect.businessId, {
+      force: true,
+    });
+
+    revalidatePath(`/prospects/${prospectId}`);
+    return {
+      pages: record.data?.pageCount ?? 0,
+      requests: record.requests,
+      changed,
+      status: record.status,
+    };
+  });
+}
+
+export async function getResearchAction(prospectId: string) {
+  return act(async (workspaceId) => {
+    const { prospect } = await requireProspectAccess(prospectId);
+    return getResearch(workspaceId, prospect.businessId);
+  });
+}
+
+/* -------------------------------------------------------------------- gmail */
+
+export async function getGmailAction() {
+  return act(async (workspaceId) => {
+    const [connection, health] = await Promise.all([
+      gmail.connection(workspaceId),
+      gmail.health(workspaceId),
+    ]);
+    // `connection` is the redacted view: it reports whether a refresh token
+    // exists, never the token. Nothing here can leak a credential to a client
+    // component, because the credential never enters the returned object.
+    return { connection, health, scopes: GOOGLE_SCOPES };
+  });
+}
+
+export async function testGmailAction(): Promise<ActionResult<{ ok: boolean; detail: string }>> {
+  return act(async (workspaceId) => {
+    await requireWrite();
+    return gmail.testConnection(workspaceId);
+  });
+}
+
+export async function disconnectGmailAction(): Promise<ActionResult> {
+  return act(async (workspaceId) => {
+    await requireWrite();
+    await disconnectGmail(workspaceId);
+    revalidatePath("/settings");
+    return undefined;
+  });
+}
+
+const gmailSettingsSchema = z.object({
+  fromName: z.string().max(80).nullable(),
+  replyTo: z.string().email().max(160).nullable().or(z.literal("")),
+  signature: z.string().max(600).nullable(),
+  dailyLimit: z.coerce.number().int().min(1).max(2000),
+});
+
+export async function updateGmailSettingsAction(raw: unknown): Promise<ActionResult> {
+  return act(async (workspaceId) => {
+    await requireWrite();
+    const patch = gmailSettingsSchema.parse(raw);
+    const existing = await prisma.gmailAccount.findUnique({ where: { workspaceId } });
+    if (!existing) {
+      throw toAppError(new Error("No Gmail account is connected to this workspace."));
+    }
+    await prisma.gmailAccount.update({
+      where: { workspaceId },
+      data: {
+        fromName: patch.fromName || null,
+        replyTo: patch.replyTo || null,
+        signature: patch.signature || null,
+        dailyLimit: patch.dailyLimit,
+      },
+    });
+    revalidatePath("/settings");
+    return undefined;
+  });
+}
+
+/* ------------------------------------------------------------ outreach queue */
+
+const editSchema = z.object({
+  messageId: z.string().min(1),
+  subject: z.string().max(200).nullable().optional(),
+  body: z.string().min(1).max(8000),
+});
+
+/**
+ * Edits a draft. Editing an approved message withdraws its approval — see
+ * `outreach-queue.ts` for why that is not negotiable.
+ */
+export async function editMessageAction(raw: unknown): Promise<ActionResult> {
+  return act(async (workspaceId) => {
+    const patch = editSchema.parse(raw);
+    await requireMessageAccess(patch.messageId);
+    await editMessage(workspaceId, patch.messageId, {
+      subject: patch.subject,
+      body: patch.body,
+    });
+    revalidatePath("/outreach");
+    return undefined;
+  });
+}
+
+/** Approves a draft. Sends nothing. */
+export async function approveForSendAction(messageId: string): Promise<ActionResult> {
+  return act(async (workspaceId) => {
+    await requireMessageAccess(messageId);
+    await approveForSend(workspaceId, messageId);
+    revalidatePath("/outreach");
+    return undefined;
+  });
+}
+
+/**
+ * Sends one approved message.
+ *
+ * Separate from approval on purpose, and separate from any bulk operation:
+ * this action sends exactly one message, and the caller has to have shown the
+ * user the recipient first.
+ */
+export async function sendApprovedAction(messageId: string): Promise<
+  ActionResult<{
+    status: string;
+    transport: string;
+    detail: string;
+    externalId: string | null;
+  }>
+> {
+  return act(async (workspaceId) => {
+    await requireMessageAccess(messageId);
+    const result = await sendApproved(workspaceId, messageId);
+    revalidatePath("/outreach");
+    return result;
+  });
+}
+
+export async function retryFailedAction(messageId: string): Promise<ActionResult> {
+  return act(async (workspaceId) => {
+    await requireMessageAccess(messageId);
+    await retryFailed(workspaceId, messageId);
+    revalidatePath("/outreach");
+    return undefined;
+  });
+}
+
+const bulkSendSchema = z.object({
+  messageIds: z.array(z.string().min(1)).min(1).max(50),
+  /**
+   * Repeated back from the confirmation dialog. If it does not match the number
+   * of ids the request is refused: that mismatch means the list changed between
+   * the user reading the count and pressing the button, and sending a different
+   * number of messages than someone agreed to is exactly the failure this whole
+   * flow exists to prevent.
+   */
+  confirmedCount: z.number().int().min(1),
+});
+
+/**
+ * Sends several already-approved messages.
+ *
+ * Bulk *generation* is fine and bulk *sending* is not, so this is the single
+ * concession: it sends messages a human has already approved individually, one
+ * at a time, stopping at the rate limit. It cannot approve anything, and it
+ * cannot touch a draft.
+ */
+export async function bulkSendApprovedAction(
+  raw: unknown,
+): Promise<ActionResult<{ sent: number; manual: number; failed: number; details: string[] }>> {
+  return act(async (workspaceId) => {
+    const input = bulkSendSchema.parse(raw);
+    if (input.confirmedCount !== input.messageIds.length) {
+      throw toAppError(
+        new Error(
+          `The confirmation was for ${input.confirmedCount} message(s) but ${input.messageIds.length} were submitted. Nothing was sent.`,
+        ),
+      );
+    }
+
+    let sent = 0;
+    let manual = 0;
+    let failed = 0;
+    const details: string[] = [];
+
+    for (const id of input.messageIds) {
+      try {
+        await requireMessageAccess(id);
+        const result = await sendApproved(workspaceId, id);
+        if (result.status === "sent") sent += 1;
+        else {
+          manual += 1;
+          details.push(result.detail);
+        }
+      } catch (e) {
+        failed += 1;
+        details.push(e instanceof Error ? e.message : "Unknown failure.");
+      }
+    }
+
+    revalidatePath("/outreach");
+    return { sent, manual, failed, details: [...new Set(details)].slice(0, 5) };
+  });
+}
+
+export async function getQueueAction(params: Record<string, string | string[] | undefined>) {
+  return act(async (workspaceId) => {
+    const filters = parseQueueFilters(params);
+    return listQueue(workspaceId, filters);
+  });
+}
+
+export async function getTimelineAction(prospectId: string) {
+  return act(async (workspaceId) => {
+    await requireProspectAccess(prospectId);
+    return prospectTimeline(workspaceId, prospectId);
   });
 }

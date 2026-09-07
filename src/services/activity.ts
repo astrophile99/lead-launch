@@ -11,6 +11,8 @@ export type ActivityType =
   | "prospect.stage-changed"
   | "prospect.tagged"
   | "prospect.note"
+  | "research.completed"
+  | "research.failed"
   | "audit.started"
   | "audit.completed"
   | "audit.failed"

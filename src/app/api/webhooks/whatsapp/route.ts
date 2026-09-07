@@ -1,7 +1,15 @@
 import { NextResponse } from "next/server";
 import { appConfig } from "@/config/app";
 import { prisma } from "@/db/client";
-import { acknowledge, verifySignature, verifySubscription } from "@/lib/meta-webhook";
+import {
+  acknowledge,
+  claimEvent,
+  verifySignature,
+  verifySubscription,
+  withinReplayWindow,
+} from "@/lib/meta-webhook";
+import { checkRate } from "@/lib/rate-limit";
+import { sha256 } from "@/lib/crypto";
 import { startJob } from "@/lib/logger";
 import { recordOptOut } from "@/services/optouts";
 
@@ -60,8 +68,25 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const log = startJob("webhook.whatsapp.receive");
 
+  // Rate limit before any work. This endpoint is public by necessity, so an
+  // unauthenticated flood must cost us a map lookup rather than a signature
+  // verification and a database round trip.
+  const rate = checkRate("webhook:whatsapp", 300, 60_000);
+  if (!rate.ok) {
+    return NextResponse.json(
+      { success: false, error: { code: "rate-limited", message: "Too many webhook deliveries.", remedy: "Meta should back off and retry.", retryable: true } },
+      { status: 429, headers: { "retry-after": String(rate.retryAfterSeconds) } },
+    );
+  }
+
   // Read the raw bytes: re-serialising parsed JSON breaks the HMAC.
   const raw = await request.text();
+  if (raw.length > 1_000_000) {
+    return NextResponse.json(
+      { success: false, error: { code: "invalid-input", message: "Webhook payload too large.", remedy: "This is not a payload Meta sends.", retryable: false } },
+      { status: 413 },
+    );
+  }
 
   if (!appConfig.whatsapp.appSecret) {
     log.warn("rejected", { reason: "META_APP_SECRET not configured" });
@@ -82,6 +107,13 @@ export async function POST(request: Request) {
 
   if (!verifySignature(raw, request.headers.get("x-hub-signature-256"))) {
     log.warn("rejected", { reason: "bad signature" });
+    // Recorded so a run of forged deliveries is visible in the data rather
+    // than only in a log line nobody reads.
+    await claimEvent("whatsapp", `rejected:${sha256(raw).slice(0, 32)}`, {
+      status: "rejected",
+      reason: "Signature verification failed.",
+      bytes: raw.length,
+    });
     return NextResponse.json(
       {
         success: false,
@@ -114,6 +146,18 @@ export async function POST(request: Request) {
 
       for (const status of value.statuses ?? []) {
         if (!status.id) {
+          ignored++;
+          continue;
+        }
+
+        // Idempotency: the same status can arrive several times. Key on the
+        // message id plus the status, since "delivered" then "read" are two
+        // legitimate events about one message.
+        const claim = await claimEvent("whatsapp", `status:${status.id}:${status.status}`, {
+          status: "accepted",
+          bytes: raw.length,
+        });
+        if (!claim.fresh) {
           ignored++;
           continue;
         }
@@ -162,6 +206,26 @@ export async function POST(request: Request) {
           continue;
         }
 
+        // A replayed inbound message would otherwise re-open a conversation
+        // that was closed, and re-notify. Meta's own id is stable across
+        // retries, so it is the right key.
+        const eventId = inbound.id ?? `inbound:${from}:${sha256(text).slice(0, 16)}`;
+        const claim = await claimEvent("whatsapp", eventId, {
+          status: "accepted",
+          bytes: raw.length,
+        });
+        if (!claim.fresh) {
+          ignored++;
+          continue;
+        }
+
+        const sentAt = inbound.timestamp ? Number.parseInt(inbound.timestamp, 10) : null;
+        if (!withinReplayWindow(sentAt, 24 * 60 * 60 * 1000)) {
+          // A day-old "inbound message" is a replay, not a conversation.
+          ignored++;
+          continue;
+        }
+
         const phoneTail = from.replace(/\D+/g, "").slice(-10);
         const prospect = await prisma.prospect.findFirst({
           where: { business: { phone: { contains: phoneTail } } },
@@ -195,7 +259,7 @@ export async function POST(request: Request) {
         } else {
           await prisma.prospect.update({
             where: { id: prospect.id },
-            data: { stage: "meeting" },
+            data: { stage: "responded" },
           });
           await prisma.notification.create({
             data: {
