@@ -33,6 +33,20 @@ export const appConfig = {
   mode: (env("APP_MODE") ?? "demo") as AppMode,
   defaultWorkspaceSlug: env("DEFAULT_WORKSPACE_SLUG") ?? "studio",
   appUrl: env("APP_URL") ?? "http://localhost:3000",
+  isProduction: process.env.NODE_ENV === "production",
+
+  database: {
+    /** Passed to the Prisma driver adapter in src/db/client.ts. */
+    url: env("DATABASE_URL") ?? "file:./dev.db",
+    /**
+     * Which engine is actually behind that URL. SQLite is correct for local
+     * development and wrong for anything with more than one process, so the
+     * distinction is surfaced rather than assumed.
+     */
+    get isPostgres() {
+      return (env("DATABASE_URL") ?? "").startsWith("postgres");
+    },
+  },
 
   auth: {
     /** Supabase project URL. Safe to expose; the anon key is not a secret either. */

@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { AI_CAPABILITIES, AI_PROVIDERS } from "@/config/ai";
+import { appConfig } from "@/config/app";
 import { PIPELINE_STAGES } from "@/config/pipeline";
 import { SCORING_FACTORS } from "@/config/scoring";
 import { prisma } from "@/db/client";
@@ -839,7 +840,7 @@ export async function testIntegrationAction(
     }
 
     if (itemId === "lighthouse-psi") {
-      const key = process.env.PAGESPEED_API_KEY;
+      const key = appConfig.audit.pagespeed;
       if (!key) return { ok: false, detail: "PAGESPEED_API_KEY is not set." };
       const res = await fetch(
         `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=https%3A%2F%2Fexample.com&key=${encodeURIComponent(key)}&category=performance`,
@@ -850,7 +851,7 @@ export async function testIntegrationAction(
     }
 
     if (itemId === "google-places") {
-      const key = process.env.GOOGLE_PLACES_API_KEY;
+      const key = appConfig.businessData.googlePlaces;
       if (!key) return { ok: false, detail: "GOOGLE_PLACES_API_KEY is not set." };
       const res = await fetch("https://places.googleapis.com/v1/places:searchText", {
         method: "POST",
@@ -867,7 +868,7 @@ export async function testIntegrationAction(
     }
 
     if (itemId === "vercel") {
-      const token = process.env.VERCEL_TOKEN;
+      const token = appConfig.deployment.vercelToken;
       if (!token) return { ok: false, detail: "VERCEL_TOKEN is not set." };
       const res = await fetch("https://api.vercel.com/v2/user", {
         headers: { authorization: `Bearer ${token}` },
@@ -880,10 +881,10 @@ export async function testIntegrationAction(
     if (["anthropic", "openai", "gemini"].includes(itemId)) {
       const key =
         itemId === "anthropic"
-          ? process.env.ANTHROPIC_API_KEY
+          ? appConfig.ai.anthropic
           : itemId === "openai"
-            ? process.env.OPENAI_API_KEY
-            : process.env.GEMINI_API_KEY;
+            ? appConfig.ai.openai
+            : appConfig.ai.gemini;
       if (!key) return { ok: false, detail: `No key configured for ${itemId}.` };
 
       // Deliberately a metadata call, not a completion: testing a connection
@@ -943,7 +944,7 @@ export async function saveWhatsAppAction(raw: unknown): Promise<ActionResult> {
       displayPhoneNumber: input.displayPhoneNumber || null,
       apiVersion: input.apiVersion,
       webhookVerifyToken: input.webhookVerifyToken || null,
-      tokenConfigured: Boolean(process.env.WHATSAPP_ACCESS_TOKEN),
+      tokenConfigured: Boolean(appConfig.whatsapp.accessToken),
       // Saving configuration is not a connection. Only a passing test is.
       status: "not-configured",
       lastError: null,
@@ -975,7 +976,7 @@ export async function saveInstagramAction(raw: unknown): Promise<ActionResult> {
       igBusinessId: input.igBusinessId || null,
       pageId: input.pageId || null,
       username: input.username?.replace(/^@/, "") || null,
-      tokenConfigured: Boolean(process.env.INSTAGRAM_ACCESS_TOKEN),
+      tokenConfigured: Boolean(appConfig.instagram.accessToken),
       status: "not-configured",
       lastError: null,
     };

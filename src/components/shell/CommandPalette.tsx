@@ -37,18 +37,97 @@ const STATIC_COMMANDS: Command[] = [
     href: "/audit?status=pending",
   },
   {
-    id: "act:approve",
-    title: "Approve outreach drafts",
-    subtitle: "Review messages waiting on you",
+    id: "act:review",
+    title: "Review the next message",
+    subtitle: "Open the drafts waiting on you",
+    group: "Outreach",
+    href: "/outreach?state=needs-review",
+  },
+  {
+    id: "act:queue",
+    title: "Open the outreach queue",
+    subtitle: "Every channel, every state",
+    group: "Outreach",
+    href: "/outreach",
+  },
+  {
+    id: "act:approved",
+    title: "Approved and waiting to send",
+    subtitle: "Reviewed, but nothing has gone yet",
+    group: "Outreach",
+    href: "/outreach?state=approved",
+  },
+  {
+    id: "act:followup",
+    title: "Follow-ups due",
+    subtitle: "Sent a while ago with no reply",
+    group: "Outreach",
+    href: "/outreach?state=follow-up-due",
+  },
+  {
+    id: "act:gmail",
+    title: "Open Gmail settings",
+    subtitle: "Connect an account, check the connection",
+    group: "Outreach",
+    href: "/settings?tab=gmail",
+  },
+  {
+    id: "act:whatsapp",
+    title: "Open WhatsApp settings",
+    subtitle: "Meta Cloud API and templates",
+    group: "Outreach",
+    href: "/settings?tab=whatsapp",
+  },
+  {
+    id: "act:instagram",
+    title: "Open Instagram settings",
+    subtitle: "Meta Graph API, replies only",
+    group: "Outreach",
+    href: "/settings?tab=instagram",
+  },
+  /*
+   * Deliberately absent: "Send message", "Approve and send", "Build website".
+   *
+   * The palette is a way to get somewhere quickly, not a way to skip a
+   * confirmation. Anything that spends money or leaves the building has a
+   * dialog in front of it, and a command that bypassed that dialog would make
+   * the dialog pointless. Building takes you to the project; sending takes you
+   * to the message.
+   */
+  {
+    id: "act:build",
+    title: "Build a website",
+    subtitle: "Opens the Studio — the build dialog still asks for a model",
     group: "Actions",
-    href: "/outreach?status=draft",
+    href: "/studio",
+  },
+  {
+    id: "act:research",
+    title: "Research a prospect",
+    subtitle: "Open the prospect list and pick one",
+    group: "Actions",
+    href: "/prospects?sort=opportunity",
   },
   {
     id: "act:providers",
-    title: "Change AI provider routing",
-    subtitle: "Capability to provider and model",
+    title: "Open the AI Control Center",
+    subtitle: "Capability routing, models and spend",
     group: "Actions",
     href: "/ai",
+  },
+  {
+    id: "act:cost",
+    title: "Show AI spend",
+    subtitle: "Today, this week, this month",
+    group: "Actions",
+    href: "/ai?tab=cost",
+  },
+  {
+    id: "act:settings",
+    title: "Open settings",
+    subtitle: "Integrations, research, storage, security",
+    group: "Actions",
+    href: "/settings",
   },
 ];
 

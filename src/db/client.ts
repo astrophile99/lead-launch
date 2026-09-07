@@ -1,3 +1,4 @@
+import { appConfig } from "@/config/app";
 import { PrismaClient } from "@/generated/prisma/client";
 import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
 
@@ -7,7 +8,7 @@ import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
  * datasource provider line in schema.prisma - no application code moves.
  */
 function createClient(): PrismaClient {
-  const url = process.env.DATABASE_URL ?? "file:./dev.db";
+  const url = appConfig.database.url;
 
   if (url.startsWith("postgres")) {
     throw new Error(
@@ -24,4 +25,4 @@ const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 
 export const prisma: PrismaClient = globalForPrisma.prisma ?? createClient();
 
-if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
+if (!appConfig.isProduction) globalForPrisma.prisma = prisma;

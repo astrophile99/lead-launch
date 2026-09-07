@@ -181,11 +181,11 @@ export async function getIntegrationGroups(workspaceId: string): Promise<Integra
     items: [
       {
         id: "database",
-        label: process.env.DATABASE_URL?.startsWith("postgres")
+        label: appConfig.database.isPostgres
           ? "PostgreSQL"
           : "SQLite (local dev)",
         status: "connected",
-        detail: process.env.DATABASE_URL?.startsWith("postgres")
+        detail: appConfig.database.isPostgres
           ? "Connected to PostgreSQL."
           : "Local file database. Fine for development; move to Postgres for production.",
         setupHint:

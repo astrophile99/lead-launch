@@ -6,6 +6,11 @@ import { getSpendSummary } from "@/services/costs";
 import { getIntegrationGroups } from "@/services/integrations";
 import { listOptOuts } from "@/services/optouts";
 import { getSettings } from "@/services/settings";
+import { capabilities } from "@/config/app";
+import { gmail, GOOGLE_SCOPES } from "@/providers/messaging";
+import { storageHealth } from "@/providers/storage";
+import { cacheEffectiveness, getUsage } from "@/services/provider-usage";
+import { GmailSettings } from "@/components/features/GmailSettings";
 import { QueryTabs } from "@/components/ui/Tabs";
 import { IntegrationGroupCard } from "@/components/features/IntegrationCard";
 import { InstagramForm, WhatsAppForm } from "@/components/features/MetaChannelForms";
@@ -33,7 +38,21 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
   const tab = (Array.isArray(sp.tab) ? sp.tab[0] : sp.tab) ?? "integrations";
   const ctx = await getWorkspaceContext();
 
-  const [workspace, settings, groups, tags, optOuts, spend, wa, ig] = await Promise.all([
+  const [
+    workspace,
+    settings,
+    groups,
+    tags,
+    optOuts,
+    spend,
+    wa,
+    ig,
+    gmailRow,
+    gmailHealth,
+    usage,
+    cache,
+    storage,
+  ] = await Promise.all([
     prisma.workspace.findUnique({ where: { id: ctx.workspaceId } }),
     getSettings(ctx.workspaceId),
     getIntegrationGroups(ctx.workspaceId),
@@ -42,15 +61,28 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
     getSpendSummary(ctx.workspaceId),
     prisma.whatsAppAccount.findUnique({ where: { workspaceId: ctx.workspaceId } }),
     prisma.instagramAccount.findUnique({ where: { workspaceId: ctx.workspaceId } }),
+    gmail.connection(ctx.workspaceId),
+    gmail.health(ctx.workspaceId),
+    getUsage(ctx.workspaceId),
+    cacheEffectiveness(ctx.workspaceId),
+    storageHealth(),
   ]);
+
+  const gmailView = { connection: gmailRow, health: gmailHealth, scopes: GOOGLE_SCOPES };
 
   const connected = groups.filter((g) => g.ready).length;
   const webhookBase = appConfig.appUrl.replace(/\/$/, "");
 
+  // Grouped rather than one long page: integrations first, then one tab per
+  // integration that has real setup of its own, then the knobs.
   const tabs = [
     { id: "integrations", label: "Integrations", count: connected },
+    { id: "gmail", label: "Gmail" },
     { id: "whatsapp", label: "WhatsApp" },
     { id: "instagram", label: "Instagram" },
+    { id: "research", label: "Research" },
+    { id: "storage", label: "Storage" },
+    { id: "security", label: "Security" },
     { id: "scoring", label: "Scoring" },
     { id: "budget", label: "Budget" },
     { id: "workspace", label: "Workspace" },
@@ -95,6 +127,206 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
               </InfoNote>
             </div>
           </div>
+        ) : null}
+
+        {tab === "gmail" ? (
+          <GmailSettings
+            view={{
+              connection: gmailView.connection
+                ? {
+                    ...gmailView.connection,
+                    connectedAt: gmailView.connection.connectedAt?.toISOString() ?? null,
+                    lastCheckedAt: gmailView.connection.lastCheckedAt?.toISOString() ?? null,
+                  }
+                : null,
+              health: gmailView.health,
+              scopes: [...gmailView.scopes],
+            }}
+          />
+        ) : null}
+
+        {tab === "research" ? (
+          <div className="flex flex-col gap-5">
+            <Panel>
+              <PanelHeader
+                title="Research budget"
+                hint="Every limit here is enforced by the crawler, not merely suggested. Research is the recurring cost in this product, so the ceilings are real."
+              />
+              <div className="px-4 py-3.5">
+                <DetailList
+                  labelWidth="w-44"
+                  items={[
+                    ["Pages per site", `${appConfig.research.maxPagesPerSite} maximum`],
+                    [
+                      "Bytes per page",
+                      `${(appConfig.research.maxBytesPerPage / 1024).toFixed(0)}KB, read in chunks and abandoned past the cap`,
+                    ],
+                    ["Request timeout", `${appConfig.research.fetchTimeoutMs}ms`],
+                    [
+                      "Redirects",
+                      `${appConfig.research.maxRedirects}, each hop re-checked against the SSRF guard`,
+                    ],
+                    ["Per-host throttle", `${appConfig.research.hostThrottleMs}ms between requests`],
+                    ["Cache lifetime", `${appConfig.research.cacheTtlDays} days`],
+                    [
+                      "robots.txt",
+                      appConfig.research.respectRobots ? "honoured" : "ignored (development only)",
+                    ],
+                    ["User agent", appConfig.research.userAgent],
+                  ]}
+                />
+              </div>
+            </Panel>
+
+            <Panel>
+              <PanelHeader
+                title="External calls this month"
+                hint="Counted per provider, so the Google free allowance is a number rather than a surprise at the end of the month."
+              />
+              {usage.length === 0 ? (
+                <p className="px-4 py-3 text-[12.5px] text-ink-3">
+                  No external calls have been made this month.
+                </p>
+              ) : (
+                <div className="px-4 py-3 flex flex-col gap-3">
+                  {usage.map((u) => (
+                    <div
+                      key={u.provider}
+                      className="border-b border-line pb-2.5 last:border-0 last:pb-0"
+                    >
+                      <div className="flex items-center gap-2">
+                        <p className="text-[12.5px] font-medium text-ink">{u.label}</p>
+                        <span className="tabular ml-auto text-[12.5px] text-ink-2">
+                          {u.requests} request{u.requests === 1 ? "" : "s"}
+                        </span>
+                      </div>
+                      {u.freeRemaining != null ? (
+                        <p className="text-[11.5px] text-ink-3 mt-0.5">
+                          {u.freeRemaining} of {u.freeAllowance} free calls remaining this month.
+                        </p>
+                      ) : null}
+                      <p className="text-[11.5px] text-ink-4 mt-0.5 leading-snug">{u.note}</p>
+                      <p className="text-[11.5px] text-ink-4">
+                        {u.priced
+                          ? `Estimated cost: $${(u.estimatedUsd ?? 0).toFixed(2)}.`
+                          : "No per-request price is configured, so no money figure is shown."}
+                      </p>
+                    </div>
+                  ))}
+                  {cache.hitRate != null ? (
+                    <InfoNote tone="ok">
+                      The research cache served {cache.hitRate}% of lookups without a request.
+                    </InfoNote>
+                  ) : null}
+                </div>
+              )}
+            </Panel>
+          </div>
+        ) : null}
+
+        {tab === "storage" ? (
+          <Panel>
+            <PanelHeader
+              title="Artifact storage"
+              hint="Where generated websites persist. The local filesystem is a build cache, never the source of truth in production."
+              actions={
+                <Badge tone={storage.durable ? "ok" : "warn"} dot>
+                  {storage.durable ? "durable" : "not durable"}
+                </Badge>
+              }
+            />
+            <div className="px-4 py-3.5 flex flex-col gap-3">
+              <DetailList
+                items={[
+                  ["Provider", storage.label],
+                  ["Status", storage.status],
+                  ["Detail", storage.detail],
+                  ["Bucket", appConfig.storage.bucket],
+                ]}
+              />
+              {!storage.durable ? (
+                <InfoNote tone="warn">
+                  Generated sites are on this machine&apos;s disk. That is fine while developing and
+                  wrong on a serverless host, where the filesystem is discarded between deploys — a
+                  build would survive until the next restart and then be gone. Set{" "}
+                  <code>STORAGE_PROVIDER=supabase</code> with a bucket before relying on it.
+                </InfoNote>
+              ) : null}
+              {storage.setupHint ? (
+                <p className="text-[12px] text-ink-3">{storage.setupHint}</p>
+              ) : null}
+            </div>
+          </Panel>
+        ) : null}
+
+        {tab === "security" ? (
+          <Panel>
+            <PanelHeader
+              title="Security"
+              hint="What is enforced today, and what is not. Stated rather than implied."
+            />
+            <div className="px-4 py-3.5 flex flex-col gap-3">
+              {!capabilities.hasAuth ? (
+                <InfoNote tone="danger">
+                  <strong className="font-semibold">Authentication is not wired up.</strong> Every
+                  screen exists and validates, and the data model is ready, but sign-in cannot work
+                  until Supabase is configured. Until then anyone who can reach this server has
+                  owner access — do not expose it publicly.
+                </InfoNote>
+              ) : (
+                <InfoNote tone="ok">
+                  Supabase credentials are present. Session enforcement is the next phase.
+                </InfoNote>
+              )}
+              <DetailList
+                labelWidth="w-44"
+                items={[
+                  [
+                    "Authorization",
+                    "Centralised in src/lib/authz.ts. Workspace ids are always derived from the session, never accepted from a client.",
+                  ],
+                  [
+                    "Credential encryption",
+                    capabilities.canStoreSecrets ? (
+                      <span key="enc" className="text-ok">
+                        TOKEN_ENCRYPTION_KEY is set. OAuth tokens are sealed with AES-256-GCM.
+                      </span>
+                    ) : (
+                      <span key="enc" className="text-warn">
+                        Not set. The app refuses to store an OAuth token at all rather than keeping
+                        one in plaintext.
+                      </span>
+                    ),
+                  ],
+                  [
+                    "Webhook verification",
+                    appConfig.whatsapp.appSecret ? (
+                      <span key="wh" className="text-ok">
+                        META_APP_SECRET is set; signatures are verified against the raw body.
+                      </span>
+                    ) : (
+                      <span key="wh" className="text-warn">
+                        META_APP_SECRET is missing, so webhook payloads are rejected rather than
+                        trusted.
+                      </span>
+                    ),
+                  ],
+                  [
+                    "SSRF protection",
+                    "Every fetched URL, including every redirect hop, is checked against the private-address guard before a socket opens.",
+                  ],
+                  [
+                    "Archive safety",
+                    "Downloaded ZIPs refuse any entry name that would be dangerous to extract: traversal, absolute paths, drive letters, control characters, Windows device names.",
+                  ],
+                  [
+                    "Prompt injection",
+                    "Crawled pages and inbound messages reach models as data. No model output can send a message, start a build or deploy anything — each of those needs a human action.",
+                  ],
+                ]}
+              />
+            </div>
+          </Panel>
         ) : null}
 
         {tab === "whatsapp" ? (
@@ -209,7 +441,7 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
                     items={[
                       [
                         "Database",
-                        process.env.DATABASE_URL?.startsWith("postgres")
+                        appConfig.database.isPostgres
                           ? "PostgreSQL"
                           : "SQLite (dev.db)",
                       ],

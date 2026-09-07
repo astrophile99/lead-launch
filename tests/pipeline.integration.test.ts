@@ -37,6 +37,15 @@ type Services = {
   approveMessage: typeof import("@/services/outreach").approveMessage;
   sendMessage: typeof import("@/services/outreach").sendMessage;
   optOut: typeof import("@/services/outreach").optOut;
+  editMessage: typeof import("@/services/outreach-queue").editMessage;
+  approveForSend: typeof import("@/services/outreach-queue").approveForSend;
+  sendApproved: typeof import("@/services/outreach-queue").sendApproved;
+  recordOptOut: typeof import("@/services/optouts").recordOptOut;
+  removeOptOutByIdentifier: (
+    workspaceId: string,
+    channel: string,
+    identifier: string,
+  ) => Promise<void>;
   getOverview: typeof import("@/services/analytics").getOverview;
   getFunnel: typeof import("@/services/analytics").getFunnel;
 };
@@ -62,7 +71,7 @@ beforeAll(async () => {
   }
   sqlite.close();
 
-  const [db, discovery, audit, opportunity, brief, , builds, pkg, outreach, analytics] =
+  const [db, discovery, audit, opportunity, brief, , builds, pkg, outreach, analytics, queue, optouts] =
     await Promise.all([
       import("@/db/client"),
       import("@/services/discovery"),
@@ -74,6 +83,8 @@ beforeAll(async () => {
       import("@/services/website-package"),
       import("@/services/outreach"),
       import("@/services/analytics"),
+      import("@/services/outreach-queue"),
+      import("@/services/optouts"),
     ]);
 
   s = {
@@ -92,6 +103,17 @@ beforeAll(async () => {
     approveMessage: outreach.approveMessage,
     sendMessage: outreach.sendMessage,
     optOut: outreach.optOut,
+    editMessage: queue.editMessage,
+    approveForSend: queue.approveForSend,
+    sendApproved: queue.sendApproved,
+    recordOptOut: optouts.recordOptOut,
+    removeOptOutByIdentifier: async (ws: string, channel: string, identifier: string) => {
+      // The service deletes by row id; the test only knows the identifier.
+      const row = await db.prisma.outreachOptOut.findFirst({
+        where: { workspaceId: ws, channel, identifier: identifier.toLowerCase() },
+      });
+      if (row) await optouts.removeOptOut(ws, row.id);
+    },
     getOverview: analytics.getOverview,
     getFunnel: analytics.getFunnel,
   };
@@ -228,13 +250,18 @@ describe("audit and scoring", () => {
     expect(audit!.findings.some((f) => /no website/i.test(f.title))).toBe(true);
   });
 
-  it("advances the stage to audited", async () => {
+  it("advances a brand-new prospect to Researched, and no further", async () => {
     const stages = await s.prisma.prospect.groupBy({
       by: ["stage"],
       where: { workspaceId },
       _count: { _all: true },
     });
-    expect(stages.some((x) => x.stage === "audited")).toBe(true);
+    expect(stages.some((x) => x.stage === "researched")).toBe(true);
+    // An audit is something we did, not something they did. It must never
+    // push anyone into a sales stage they have not actually reached.
+    for (const s of stages) {
+      expect(["new", "researched"]).toContain(s.stage);
+    }
   });
 
   it("creates a suggested next action for every prospect", async () => {
@@ -493,5 +520,271 @@ describe("workspace isolation", () => {
     await expect(s.analyseOpportunity(other.id, p!.id)).rejects.toThrow(/not found/i);
     await expect(s.generateBrief(other.id, p!.id)).rejects.toThrow(/not found/i);
     expect(await s.getOverview(other.id)).toMatchObject({ totalProspects: 0 });
+  });
+});
+
+/* ============================================================================
+ * The outreach approval regression, run against the real services.
+ *
+ * The spec for this release singles this out, and rightly: the failure it
+ * guards against is silent. An approval that quietly sends, or a send that
+ * marks a message "sent" without a provider confirming it, looks exactly like
+ * working software right up until a client says they never got anything, or
+ * says they got something twice.
+ * ========================================================================= */
+
+describe("outreach: draft, edit, approve, send", () => {
+  let messageId: string;
+  let prospectId: string;
+
+  it("drafts a message grounded in recorded observations", async () => {
+    const prospect = await s.prisma.prospect.findFirst({
+      where: { workspaceId },
+      include: { business: true },
+      orderBy: { opportunityScore: "desc" },
+    });
+    prospectId = prospect!.id;
+
+    const { message } = await s.draftOutreach(workspaceId, prospectId, "email", "normal");
+    messageId = message.id;
+
+    expect(message.status).toBe("draft");
+    expect(message.body.length).toBeGreaterThan(80);
+    // Frozen at draft time so the confirmation dialog can show the address
+    // that will actually be used.
+    expect(message.recipient).toBeTruthy();
+  });
+
+  it("does not consider a draft sendable", async () => {
+    await expect(s.sendApproved(workspaceId, messageId)).rejects.toThrow(/approved/i);
+
+    const after = await s.prisma.outreachMessage.findUnique({ where: { id: messageId } });
+    expect(after!.status).toBe("draft");
+    expect(after!.sentAt).toBeNull();
+  });
+
+  it("stores an edit and keeps the message a draft", async () => {
+    await s.editMessage(workspaceId, messageId, {
+      subject: "A subject I wrote myself",
+      body: "Short, direct, and entirely mine.",
+    });
+
+    const after = await s.prisma.outreachMessage.findUnique({ where: { id: messageId } });
+    expect(after!.subject).toBe("A subject I wrote myself");
+    expect(after!.body).toBe("Short, direct, and entirely mine.");
+    expect(after!.status).toBe("draft");
+    // The badge in the queue reads "edited by you" off this.
+    expect(after!.generatedByAI).toBe(false);
+    expect(after!.editedAt).not.toBeNull();
+  });
+
+  it("approves without sending anything", async () => {
+    await s.approveForSend(workspaceId, messageId);
+
+    const after = await s.prisma.outreachMessage.findUnique({
+      where: { id: messageId },
+      include: { events: true },
+    });
+    expect(after!.status).toBe("approved");
+    expect(after!.approvedAt).not.toBeNull();
+
+    // The whole point. Approval is a decision, not a transmission.
+    expect(after!.sentAt).toBeNull();
+    expect(after!.externalId).toBeNull();
+    expect(after!.events.some((e) => e.type === "sent")).toBe(false);
+  });
+
+  it("withdraws approval when the approved words are changed", async () => {
+    await s.editMessage(workspaceId, messageId, { body: "Different words entirely." });
+
+    const after = await s.prisma.outreachMessage.findUnique({ where: { id: messageId } });
+    // You approved specific words. These are not those words.
+    expect(after!.status).toBe("draft");
+    expect(after!.approvedAt).toBeNull();
+  });
+
+  it("refuses to send, and does not claim it sent, when no transport is configured", async () => {
+    await s.approveForSend(workspaceId, messageId);
+    const result = await s.sendApproved(workspaceId, messageId);
+
+    expect(result.status).toBe("manual");
+    expect(result.detail).toMatch(/nothing was sent/i);
+
+    const after = await s.prisma.outreachMessage.findUnique({
+      where: { id: messageId },
+      include: { events: true },
+    });
+    // Still approved, still unsent, and the reason is on the record.
+    expect(after!.status).toBe("approved");
+    expect(after!.sentAt).toBeNull();
+    expect(after!.externalId).toBeNull();
+    expect(after!.failureReason).toMatch(/nothing was sent/i);
+    expect(after!.events.some((e) => e.type === "sent")).toBe(false);
+  });
+
+  it("never advances the prospect on a send that did not happen", async () => {
+    const prospect = await s.prisma.prospect.findUnique({ where: { id: prospectId } });
+    expect(prospect!.lastContactAt).toBeNull();
+    expect(prospect!.stage).not.toBe("contacted");
+  });
+
+  it("blocks a draft to an opted-out identifier at approval time", async () => {
+    const prospect = await s.prisma.prospect.findUnique({
+      where: { id: prospectId },
+      include: { business: true },
+    });
+
+    const draft = await s.draftOutreach(workspaceId, prospectId, "email", "short");
+    await s.recordOptOut(workspaceId, "email", prospect!.business.email!, {
+      reason: "Test",
+      source: "manual",
+    });
+
+    // Checked again at approval, not only when the draft was written - an
+    // opt-out that arrives between the two must still stop the message.
+    await expect(s.approveForSend(workspaceId, draft.message.id)).rejects.toThrow();
+
+    await s.removeOptOutByIdentifier(workspaceId, "email", prospect!.business.email!);
+  });
+});
+
+describe("outreach: WhatsApp and Instagram follow the same rules", () => {
+  it("keeps a WhatsApp draft unsent through approval", async () => {
+    const prospect = await s.prisma.prospect.findFirst({
+      // A prospect we have already drafted for, so we know observations exist.
+      // "No observations, no message" is asserted separately; this case is
+      // about the state machine, not about grounding.
+      where: { workspaceId, messages: { some: {} }, business: { phone: { not: null } } },
+      include: { business: true },
+    });
+
+    const { message } = await s.draftOutreach(workspaceId, prospect!.id, "whatsapp", "normal");
+    expect(message.status).toBe("draft");
+
+    await s.approveForSend(workspaceId, message.id);
+    const approved = await s.prisma.outreachMessage.findUnique({ where: { id: message.id } });
+    expect(approved!.status).toBe("approved");
+    expect(approved!.sentAt).toBeNull();
+
+    // Cold WhatsApp contact is template-only and Meta is not configured here,
+    // so this must refuse rather than transmit.
+    const result = await s.sendApproved(workspaceId, message.id);
+    expect(result.status).toBe("manual");
+
+    const after = await s.prisma.outreachMessage.findUnique({ where: { id: message.id } });
+    expect(after!.status).toBe("approved");
+    expect(after!.sentAt).toBeNull();
+  });
+
+  it("refuses an Instagram send and says why, rather than failing silently", async () => {
+    const prospect = await s.prisma.prospect.findFirst({
+      where: { workspaceId, messages: { some: {} }, business: { instagram: { not: null } } },
+      include: { business: true },
+    });
+    if (!prospect) return;
+
+    const { message } = await s.draftOutreach(workspaceId, prospect.id, "instagram", "short");
+    await s.approveForSend(workspaceId, message.id);
+    const result = await s.sendApproved(workspaceId, message.id);
+
+    expect(result.status).toBe("manual");
+    expect(result.detail.length).toBeGreaterThan(20);
+
+    const after = await s.prisma.outreachMessage.findUnique({ where: { id: message.id } });
+    expect(after!.sentAt).toBeNull();
+  });
+});
+
+/* ============================================================================
+ * Build initiation
+ * ========================================================================= */
+
+describe("builds are never started by the pipeline", () => {
+  it("running a campaign produces no builds at all", async () => {
+    const before = await s.prisma.websiteBuild.count();
+
+    const campaign = await s.createCampaign(workspaceId, {
+      ...QUERY,
+      name: "No builds please",
+      targetCount: 4,
+    });
+    await s.runCampaign(workspaceId, campaign.id, { autoAudit: true });
+
+    // Discovery, de-duplication and auditing all ran. Nothing was built.
+    expect(await s.prisma.websiteBuild.count()).toBe(before);
+  });
+
+  it("changing the stage to a build-ready one produces no builds", async () => {
+    const before = await s.prisma.websiteBuild.count();
+    const prospect = await s.prisma.prospect.findFirst({ where: { workspaceId } });
+
+    await s.prisma.prospect.update({
+      where: { id: prospect!.id },
+      data: { stage: "meeting-completed" },
+    });
+
+    expect(await s.prisma.websiteBuild.count()).toBe(before);
+  });
+
+  it("refuses a build outside a build-ready stage unless the override is explicit", async () => {
+    const prospect = await s.prisma.prospect.findFirst({
+      where: { workspaceId, projects: { some: { briefJson: { not: null } } } },
+      include: { projects: { where: { briefJson: { not: null } } } },
+    });
+    if (!prospect?.projects[0]) throw new Error("fixture: expected a project with a brief");
+
+    await s.prisma.prospect.update({ where: { id: prospect.id }, data: { stage: "new" } });
+
+    await expect(
+      s.startBuild(workspaceId, prospect.projects[0].id, {
+        provider: "mock",
+        model: "mock-deterministic",
+        quality: "fast",
+        overrideStage: false,
+        notes: "",
+      }),
+    ).rejects.toThrow(/stage|override/i);
+
+    // And succeeds once the operator says so deliberately.
+    const built = await s.startBuild(workspaceId, prospect.projects[0].id, {
+      provider: "mock",
+      model: "mock-deterministic",
+      quality: "fast",
+      overrideStage: true,
+      notes: "",
+    });
+    expect(built.version).toBeGreaterThan(0);
+
+    const build = await s.prisma.websiteBuild.findUnique({ where: { id: built.buildId } });
+    // The override is recorded, so speculative builds are identifiable later.
+    expect(build!.stageOverride).toBe(true);
+    expect(build!.stageAtRequest).toBe("new");
+  });
+
+  it("records the strategy that ran, not the one that was requested", async () => {
+    const prospect = await s.prisma.prospect.findFirst({
+      where: { workspaceId, projects: { some: { briefJson: { not: null } } } },
+      include: { projects: { where: { briefJson: { not: null } } } },
+    });
+    if (!prospect?.projects[0]) throw new Error("fixture: expected a project with a brief");
+
+    // Ask for an agent build with a provider that has no key in this test env.
+    const built = await s.startBuild(workspaceId, prospect.projects[0].id, {
+      provider: "anthropic",
+      model: "claude-opus-5",
+      quality: "balanced",
+      overrideStage: true,
+      notes: "",
+    });
+
+    expect(built.requestedStrategy).toBe("agent");
+    expect(built.strategy).toBe("scaffold");
+    expect(built.fallbackReason).toMatch(/no API key/i);
+
+    const version = await s.prisma.websiteVersion.findUnique({ where: { id: built.versionId } });
+    // Everything downstream must say scaffold, including the README.
+    expect(version!.strategy).toBe("scaffold");
+    expect(version!.provider).toBe("builtin-scaffold");
+    expect(version!.readmeText).toMatch(/did not run the way it was requested/);
   });
 });
