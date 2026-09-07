@@ -1,4 +1,3 @@
-import { appConfig } from "@/config/app";
 import { prisma } from "@/db/client";
 import { AppError } from "@/lib/errors";
 import { fromJson, toJson } from "@/lib/json";
@@ -7,8 +6,9 @@ import { factsBlock, jsonParser, runAIJob } from "./ai-jobs";
 import { logActivity, notify } from "./activity";
 import { getSettings } from "./settings";
 import { latestOpportunity, refreshSuggestedTask } from "./opportunity";
-import { getMessagingProvider } from "@/providers/messaging";
-import { assertNotOptedOut } from "./optouts";
+import { resolveTransport } from "@/providers/messaging";
+import { identifierFor } from "./optouts";
+import { approveForSend, sendApproved } from "./outreach-queue";
 import { getActiveVoice, voiceInstructions } from "./voice";
 
 /**
@@ -206,6 +206,12 @@ export async function draftOutreach(
       model: outcome.model,
       aiJobId: outcome.jobId,
       voiceId: voice.id === "builtin" ? null : voice.id,
+      // Frozen at draft time so the confirmation dialog shows the address that
+      // will actually be used, rather than re-resolving it at send.
+      recipient: identifierFor(channel, prospect.business),
+      transport: (await resolveTransport(workspaceId, channel)).id,
+      generatedByAI: !outcome.isMock,
+      costUsd: outcome.costUsd,
     },
   });
 
@@ -225,141 +231,28 @@ export async function draftOutreach(
   return { message, isMock: outcome.isMock };
 }
 
+/**
+ * Approve and send.
+ *
+ * Both delegate to `outreach-queue.ts`, which owns the state machine for every
+ * channel. Two implementations of "what does approved mean" is exactly how a
+ * message ends up marked sent without being sent, so there is only one.
+ */
 export async function approveMessage(workspaceId: string, messageId: string) {
-  const message = await prisma.outreachMessage.findFirst({
-    where: { id: messageId, prospect: { workspaceId } },
-    include: { prospect: { include: { business: true } } },
-  });
-  if (!message) {
-    throw new AppError({
-      kind: "not-found",
-      message: "Message not found.",
-      remedy: "Refresh the outreach list.",
-    });
-  }
-  if (message.status !== "draft") {
-    throw new AppError({
-      kind: "conflict",
-      message: `This message is already ${message.status}.`,
-      remedy: "Only drafts can be approved.",
-    });
-  }
-
-  const updated = await prisma.outreachMessage.update({
-    where: { id: messageId },
-    data: { status: "approved", approvedAt: new Date() },
-  });
-  await prisma.outreachEvent.create({ data: { messageId, type: "approved" } });
-  await logActivity({
-    workspaceId,
-    prospectId: message.prospectId,
-    type: "outreach.approved",
-    message: `Approved the ${message.variant} ${message.channel} message.`,
-    meta: { messageId },
-  });
-  await refreshSuggestedTask(workspaceId, message.prospectId);
-  return updated;
-}
-
-/** Rate limit is enforced per workspace against real send events. */
-async function assertWithinRateLimit(workspaceId: string) {
-  const since = new Date(Date.now() - 3_600_000);
-  const sent = await prisma.outreachMessage.count({
-    where: { prospect: { workspaceId }, status: { in: ["sent", "replied"] }, sentAt: { gte: since } },
-  });
-  if (sent >= appConfig.outreach.rateLimitPerHour) {
-    throw new AppError({
-      kind: "rate-limited",
-      message: `The hourly send limit of ${appConfig.outreach.rateLimitPerHour} has been reached.`,
-      remedy: "Wait for the window to roll over, or raise OUTREACH_RATE_LIMIT_PER_HOUR.",
-      retryable: true,
-    });
-  }
+  return approveForSend(workspaceId, messageId);
 }
 
 export async function sendMessage(workspaceId: string, messageId: string) {
-  const message = await prisma.outreachMessage.findFirst({
-    where: { id: messageId, prospect: { workspaceId } },
-    include: { prospect: { include: { business: true } } },
-  });
-  if (!message) {
-    throw new AppError({
-      kind: "not-found",
-      message: "Message not found.",
-      remedy: "Refresh the outreach list.",
-    });
-  }
-  if (message.status !== "approved") {
-    throw new AppError({
-      kind: "conflict",
-      message: "Only approved messages can be sent.",
-      remedy: "Approve the draft first — this step is deliberate and cannot be skipped.",
-    });
-  }
-  if (message.prospect.stage === "not-interested") {
-    throw new AppError({
-      kind: "conflict",
-      message: "This prospect has opted out.",
-      remedy: "Opted-out prospects are excluded from outreach.",
-    });
-  }
-
-  await assertWithinRateLimit(workspaceId);
-  await assertNotOptedOut(workspaceId, message.channel as OutreachChannel, message.prospect.business);
-
-  const provider = getMessagingProvider(message.channel as OutreachChannel);
-  const result = await provider.send(workspaceId, {
-    to: {
-      email: message.prospect.business.email,
-      phone: message.prospect.business.phone,
-      handle: message.prospect.business.instagram,
-      externalId: null,
-      name: message.prospect.business.name,
-    },
-    subject: message.subject,
-    body: message.body,
-  });
-
+  const result = await sendApproved(workspaceId, messageId);
   if (result.status === "manual") {
-    // Nothing was transmitted. Record the truth: the user must send it.
-    await prisma.outreachEvent.create({
-      data: { messageId, type: "failed", detail: result.detail },
-    });
-    const health = await provider.health(workspaceId);
     throw new AppError({
       kind: "not-configured",
       message: result.detail,
-      remedy: health.setupHint,
+      remedy:
+        "Copy the approved message and send it yourself. Nothing was transmitted, and the message is still marked approved.",
     });
   }
-
-  const updated = await prisma.outreachMessage.update({
-    where: { id: messageId },
-    data: { status: "sent", sentAt: new Date(), externalId: result.externalId },
-  });
-  await prisma.outreachEvent.create({
-    data: { messageId, type: "sent", detail: `${provider.id}: ${result.detail}` },
-  });
-  await prisma.prospect.update({
-    where: { id: message.prospectId },
-    data: {
-      lastContactAt: new Date(),
-      stage: ["discovered", "qualified", "audited", "concept", "website-ready"].includes(
-        message.prospect.stage,
-      )
-        ? "contacted"
-        : message.prospect.stage,
-    },
-  });
-  await logActivity({
-    workspaceId,
-    prospectId: message.prospectId,
-    type: "outreach.sent",
-    message: `Sent the ${message.variant} ${message.channel} message via ${provider.label}.`,
-    meta: { messageId },
-  });
-  await refreshSuggestedTask(workspaceId, message.prospectId);
-  return updated;
+  return prisma.outreachMessage.findUniqueOrThrow({ where: { id: messageId } });
 }
 
 /** Records an inbound reply. Manual for now; a provider webhook can call this. */
@@ -380,7 +273,7 @@ export async function recordReply(workspaceId: string, messageId: string, detail
   });
   await prisma.prospect.update({
     where: { id: message.prospectId },
-    data: { stage: "meeting" },
+    data: { stage: "responded" },
   });
   await logActivity({
     workspaceId,

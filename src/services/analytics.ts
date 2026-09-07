@@ -191,9 +191,7 @@ export async function getFunnel(workspaceId: string): Promise<FunnelStep[]> {
     stages.reduce((s, st) => s + (byStage.get(st) ?? 0), 0);
 
   const discovered = count([...PIPELINE_STAGES]);
-  const qualified = count(
-    PIPELINE_STAGES.filter((s) => s !== "discovered") as PipelineStage[],
-  );
+  const qualified = count(PIPELINE_STAGES.filter((s) => s !== "new") as PipelineStage[]);
 
   // A funnel step must count everyone who reached it *or moved past it*, from
   // either source of evidence: a message we actually sent, or a stage a person
@@ -201,9 +199,25 @@ export async function getFunnel(workspaceId: string): Promise<FunnelStep[]> {
   // further down, because a prospect can be advanced by hand after a phone call
   // that this app never saw.
   const contactedStages: PipelineStage[] = [
-    "contacted", "follow-up", "meeting", "proposal", "negotiation", "won", "lost",
+    "contacted",
+    "responded",
+    "qualified",
+    "meeting-scheduled",
+    "meeting-completed",
+    "proposal",
+    "negotiation",
+    "won",
+    "lost",
   ];
-  const repliedStages: PipelineStage[] = ["meeting", "proposal", "negotiation", "won"];
+  const repliedStages: PipelineStage[] = [
+    "responded",
+    "qualified",
+    "meeting-scheduled",
+    "meeting-completed",
+    "proposal",
+    "negotiation",
+    "won",
+  ];
 
   const sentCount = await prisma.prospect.count({
     where: {
@@ -223,13 +237,19 @@ export async function getFunnel(workspaceId: string): Promise<FunnelStep[]> {
 
   const steps: FunnelStep[] = [
     { id: "discovered", label: "Discovered", count: discovered, rate: null },
-    { id: "qualified", label: "Qualified", count: qualified, rate: null },
+    { id: "researched", label: "Researched", count: qualified, rate: null },
     { id: "contacted", label: "Contacted", count: sentCount, rate: null },
     { id: "replied", label: "Replied", count: repliedCount, rate: null },
     {
       id: "meeting",
       label: "Meeting",
-      count: count(["meeting", "proposal", "negotiation", "won"]),
+      count: count([
+        "meeting-scheduled",
+        "meeting-completed",
+        "proposal",
+        "negotiation",
+        "won",
+      ]),
       rate: null,
     },
     { id: "proposal", label: "Proposal", count: count(["proposal", "negotiation", "won"]), rate: null },

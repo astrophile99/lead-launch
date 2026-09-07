@@ -30,7 +30,9 @@ type Services = {
   analyseOpportunity: typeof import("@/services/opportunity").analyseOpportunity;
   latestOpportunity: typeof import("@/services/opportunity").latestOpportunity;
   generateBrief: typeof import("@/services/website-brief").generateBrief;
-  startBuild: typeof import("@/services/website-projects").startBuild;
+  startBuild: typeof import("@/services/website-build").startBuild;
+  setVersionApproval: typeof import("@/services/website-build").setVersionApproval;
+  packageVersion: typeof import("@/services/website-package").packageVersion;
   draftOutreach: typeof import("@/services/outreach").draftOutreach;
   approveMessage: typeof import("@/services/outreach").approveMessage;
   sendMessage: typeof import("@/services/outreach").sendMessage;
@@ -60,7 +62,7 @@ beforeAll(async () => {
   }
   sqlite.close();
 
-  const [db, discovery, audit, opportunity, brief, projects, outreach, analytics] =
+  const [db, discovery, audit, opportunity, brief, , builds, pkg, outreach, analytics] =
     await Promise.all([
       import("@/db/client"),
       import("@/services/discovery"),
@@ -68,6 +70,8 @@ beforeAll(async () => {
       import("@/services/opportunity"),
       import("@/services/website-brief"),
       import("@/services/website-projects"),
+      import("@/services/website-build"),
+      import("@/services/website-package"),
       import("@/services/outreach"),
       import("@/services/analytics"),
     ]);
@@ -81,7 +85,9 @@ beforeAll(async () => {
     analyseOpportunity: opportunity.analyseOpportunity,
     latestOpportunity: opportunity.latestOpportunity,
     generateBrief: brief.generateBrief,
-    startBuild: projects.startBuild,
+    startBuild: builds.startBuild,
+    setVersionApproval: builds.setVersionApproval,
+    packageVersion: pkg.packageVersion,
     draftOutreach: outreach.draftOutreach,
     approveMessage: outreach.approveMessage,
     sendMessage: outreach.sendMessage,
@@ -283,8 +289,16 @@ describe("website studio", () => {
     expect(brief.generatedBy).toContain("mock");
   });
 
+  const REQUEST = {
+    provider: "mock" as const,
+    model: "mock-deterministic",
+    quality: "balanced" as const,
+    overrideStage: true,
+    notes: "",
+  };
+
   it("builds a real project on disk and versions it", async () => {
-    const result = await s.startBuild(workspaceId, projectId);
+    const result = await s.startBuild(workspaceId, projectId, REQUEST);
     expect(result.version).toBe(1);
     expect(result.qualityScore).toBeGreaterThan(80);
 
@@ -295,12 +309,54 @@ describe("website studio", () => {
     expect(html).toContain("<!DOCTYPE html>");
     expect(html).toContain('name="viewport"');
 
-    // The version archive exists so a regression can be rolled back.
-    expect(fs.existsSync(path.join(project!.path, ".versions", "v1", "index.html"))).toBe(true);
+    // Every file is stored as an artifact, so the build survives this machine.
+    const artifacts = await s.prisma.websiteArtifact.count({
+      where: { versionId: result.versionId },
+    });
+    expect(artifacts).toBeGreaterThan(1);
+  });
+
+  it("packages the version into a real ZIP carrying a README", async () => {
+    const version = await s.prisma.websiteVersion.findFirst({
+      where: { projectId },
+      orderBy: { version: "desc" },
+    });
+    const pack = await s.packageVersion(workspaceId, version!.id);
+    expect(pack.filename).toMatch(/\.zip$/);
+    // "PK" - a real local file header, not an empty buffer.
+    expect(pack.zip.subarray(0, 4).toString("latin1")).toBe("PK");
+    expect(pack.zip.length).toBeGreaterThan(200);
+    expect(version!.readmeText).toMatch(/CLIENT TO CONFIRM|Content requiring client confirmation/);
+    expect(version!.readmeText).toMatch(/not deployed by Lead/i);
+  });
+
+  it("leaves a fresh version as a draft until a human approves it", async () => {
+    const version = await s.prisma.websiteVersion.findFirst({
+      where: { projectId },
+      orderBy: { version: "desc" },
+    });
+    expect(version!.approval).toBe("draft");
+    expect(version!.approvedAt).toBeNull();
+
+    await s.setVersionApproval(workspaceId, version!.id, "approved", "Looks right.");
+    const after = await s.prisma.websiteVersion.findUnique({ where: { id: version!.id } });
+    expect(after!.approval).toBe("approved");
+    expect(after!.approvedAt).not.toBeNull();
+  });
+
+  it("does not move the prospect's sales stage when a website is built", async () => {
+    // Production is not something that happens *to* a deal. The old model
+    // advanced the prospect to "website-ready", which is how building leaked
+    // into the pipeline in the first place.
+    const project = await s.prisma.websiteProject.findUnique({
+      where: { id: projectId },
+      include: { prospect: true },
+    });
+    expect(project!.prospect.stage).not.toMatch(/build|website/i);
   });
 
   it("produces a second version rather than overwriting the first", async () => {
-    const result = await s.startBuild(workspaceId, projectId);
+    const result = await s.startBuild(workspaceId, projectId, REQUEST);
     expect(result.version).toBe(2);
     const versions = await s.prisma.websiteVersion.count({ where: { projectId } });
     expect(versions).toBe(2);
@@ -328,7 +384,7 @@ describe("website studio", () => {
         path: path.join(projectsRoot, "bare"),
       },
     });
-    await expect(s.startBuild(workspaceId, bare.id)).rejects.toThrow(/brief/i);
+    await expect(s.startBuild(workspaceId, bare.id, REQUEST)).rejects.toThrow(/brief/i);
   });
 });
 

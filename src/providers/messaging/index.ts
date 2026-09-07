@@ -1,6 +1,7 @@
 import { appConfig } from "@/config/app";
 import { AppError } from "@/lib/errors";
 import type { OutreachChannel } from "@/types";
+import { gmailProvider, GmailProvider } from "./gmail";
 import { InstagramGraphProvider } from "./instagram";
 import { WhatsAppCloudProvider } from "./whatsapp";
 import type {
@@ -175,7 +176,8 @@ class ManualProvider implements MessagingProvider {
   }
 }
 
-const email = new ResendEmailProvider();
+const resend = new ResendEmailProvider();
+const gmail = gmailProvider;
 const whatsapp = new WhatsAppCloudProvider();
 const instagram = new InstagramGraphProvider();
 
@@ -194,25 +196,46 @@ const generic = new ManualProvider(
 );
 
 const BY_CHANNEL: Record<OutreachChannel, MessagingProvider> = {
-  email,
+  email: gmail,
   whatsapp,
   instagram,
   linkedin,
   generic,
 };
 
+/**
+ * Email has two transports.
+ *
+ * Gmail is preferred when an account is connected, because the message then
+ * lives in the operator's own Sent folder and threads with any reply. Resend is
+ * the fallback for a transactional-style setup with a verified domain. Which
+ * one carried a message is recorded on the row - never inferred later.
+ */
+export async function getEmailTransport(workspaceId: string): Promise<MessagingProvider> {
+  return (await gmail.isConfigured(workspaceId)) ? gmail : resend;
+}
+
+export async function resolveTransport(
+  workspaceId: string,
+  channel: OutreachChannel,
+): Promise<MessagingProvider> {
+  if (channel === "email") return getEmailTransport(workspaceId);
+  return BY_CHANNEL[channel] ?? generic;
+}
+
 export function getMessagingProvider(channel: OutreachChannel): MessagingProvider {
   return BY_CHANNEL[channel] ?? generic;
 }
 
 export function listMessagingProviders(): MessagingProvider[] {
-  return [email, whatsapp, instagram, linkedin, generic];
+  return [gmail, resend, whatsapp, instagram, linkedin, generic];
 }
 
 export async function messagingHealth(workspaceId: string): Promise<MessagingHealth[]> {
   return Promise.all(listMessagingProviders().map((p) => p.health(workspaceId)));
 }
 
+export { gmail, resend, GmailProvider };
 export type {
   Eligibility,
   MessagingHealth,

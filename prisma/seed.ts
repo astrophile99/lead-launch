@@ -6,7 +6,7 @@ import { createCampaign, runCampaign } from "../src/services/discovery";
 import { analyseOpportunity } from "../src/services/opportunity";
 import { draftOutreach } from "../src/services/outreach";
 import { generateBrief } from "../src/services/website-brief";
-import { startBuild } from "../src/services/website-projects";
+import { startBuild } from "../src/services/website-build";
 
 /**
  * Seeds the default workspace and, in demo mode, runs the *real* pipeline
@@ -99,6 +99,11 @@ async function main() {
 
   // Take the three strongest prospects the whole way through, so the demo has
   // real briefs, real builds and real drafts to look at.
+  //
+  // Note the shape of this: the prospect is moved to a stage where a meeting
+  // has happened *before* anything is built, and the build is then requested
+  // explicitly with a provider, a model and a quality mode. Even the seed does
+  // not get to start a build by omission - there is no code path that can.
   const top = await prisma.prospect.findMany({
     where: { workspaceId: workspace.id },
     orderBy: { opportunityScore: "desc" },
@@ -110,8 +115,18 @@ async function main() {
     console.log(`Advancing ${p.business.name} (${p.opportunityScore}/100)`);
     try {
       await analyseOpportunity(workspace.id, p.id);
+      await prisma.prospect.update({
+        where: { id: p.id },
+        data: { stage: "meeting-completed", meetingAt: new Date(Date.now() - 86_400_000) },
+      });
       const { project } = await generateBrief(workspace.id, p.id);
-      await startBuild(workspace.id, project.id);
+      await startBuild(workspace.id, project.id, {
+        provider: "mock",
+        model: "mock-deterministic",
+        quality: "balanced",
+        overrideStage: false,
+        notes: "",
+      });
       await draftOutreach(workspace.id, p.id, p.business.email ? "email" : "whatsapp", "normal");
     } catch (e) {
       console.warn(`  skipped a step: ${e instanceof Error ? e.message : String(e)}`);
@@ -124,7 +139,7 @@ async function main() {
     orderBy: { opportunityScore: "desc" },
     take: 4,
   });
-  const stages = ["contacted", "follow-up", "meeting", "proposal"];
+  const stages = ["contacted", "responded", "meeting-scheduled", "proposal"];
   for (const [i, p] of others.entries()) {
     await prisma.prospect.update({
       where: { id: p.id },

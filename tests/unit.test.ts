@@ -8,6 +8,7 @@ import { interpretAudit, noWebsiteFindings } from "@/services/audit-scoring";
 import { scoreOpportunity, type ScoringInput } from "@/services/scoring";
 import { DEFAULT_SCORING_WEIGHTS, SCORING_FACTORS } from "@/config/scoring";
 import { suggestNextAction, type ProspectState } from "@/services/tasks";
+import type { PipelineStage } from "@/config/pipeline";
 import { MockBusinessDataProvider } from "@/providers/business-data/mock";
 import { MockAIProvider } from "@/providers/ai/mock";
 import { runQualityGate } from "@/agents/website-builder/quality-gate";
@@ -317,7 +318,7 @@ describe("opportunity scoring", () => {
 describe("next action engine", () => {
   const base: ProspectState = {
     id: "p1",
-    stage: "discovered",
+    stage: "new",
     hasWebsite: true,
     hasAudit: false,
     hasOpportunity: false,
@@ -351,6 +352,48 @@ describe("next action engine", () => {
         hasApprovedMessage: true,
       }).title,
     ).toMatch(/send/i);
+  });
+
+  it("never suggests building a website before a meeting has happened", () => {
+    // The whole point of the stage rework: a build is expensive and a site
+    // nobody asked for is the most expensive thing this app can produce. No
+    // pre-meeting state may nudge towards one.
+    const preMeeting: PipelineStage[] = [
+      "new",
+      "researched",
+      "contacted",
+      "responded",
+      "qualified",
+      "meeting-scheduled",
+    ];
+    for (const stage of preMeeting) {
+      for (const sent of [false, true]) {
+        const title = suggestNextAction({
+          ...base,
+          stage,
+          hasAudit: true,
+          hasOpportunity: true,
+          hasDraftMessage: sent,
+          hasApprovedMessage: sent,
+          hasSentMessage: sent,
+        }).title;
+        expect(title).not.toMatch(/build/i);
+      }
+    }
+  });
+
+  it("suggests the build only once the meeting is recorded as completed", () => {
+    expect(
+      suggestNextAction({
+        ...base,
+        stage: "meeting-completed",
+        hasAudit: true,
+        hasOpportunity: true,
+        hasDraftMessage: true,
+        hasApprovedMessage: true,
+        hasSentMessage: true,
+      }).title,
+    ).toMatch(/build/i);
   });
 });
 

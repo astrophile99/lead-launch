@@ -7,6 +7,7 @@ import { PIPELINE_STAGES } from "@/config/pipeline";
 import { SCORING_FACTORS } from "@/config/scoring";
 import { prisma } from "@/db/client";
 import { assertCanWrite, getWorkspaceContext } from "@/db/workspace";
+import { requireProjectAccess, requireVersionAccess } from "@/lib/authz";
 import { toAppError } from "@/lib/errors";
 import { toJson } from "@/lib/json";
 import { getDeploymentProvider } from "@/providers/deployment";
@@ -24,7 +25,14 @@ import {
 import { getSettings, updateSettings } from "@/services/settings";
 import { completeTask } from "@/services/tasks";
 import { generateBrief, updateBrief } from "@/services/website-brief";
-import { restoreVersion, startBuild } from "@/services/website-projects";
+import { restoreVersion } from "@/services/website-projects";
+import {
+  estimateBuild,
+  getBuildOptions,
+  setVersionApproval,
+  startBuild,
+} from "@/services/website-build";
+import { BUILD_QUALITIES, type BuildQuality } from "@/config/build";
 import { readProjectFile } from "@/agents/website-builder";
 import { estimateCost } from "@/services/costs";
 import { getIntegrationGroups } from "@/services/integrations";
@@ -190,14 +198,100 @@ export async function updateBriefAction(
   });
 }
 
-export async function startBuildAction(
-  projectId: string,
-): Promise<ActionResult<{ version: number; qualityScore: number | null }>> {
+const buildRequestSchema = z.object({
+  projectId: z.string().min(1),
+  provider: z.enum(AI_PROVIDERS),
+  model: z.string().min(1).max(120),
+  quality: z.enum(BUILD_QUALITIES),
+  /**
+   * Must be sent as an explicit `true`. Not defaulted, not coerced from a
+   * string, not inferred from the stage - an override is a decision the person
+   * makes in the dialog, and it has to arrive here as one.
+   */
+  overrideStage: z.boolean(),
+  notes: z.string().max(1000).default(""),
+});
+
+/**
+ * Reads everything the Build Website dialog shows. Starts nothing.
+ *
+ * Split from `startBuildAction` deliberately: opening the dialog must be free,
+ * so there is no version of this flow where looking at the options costs money.
+ */
+export async function getBuildOptionsAction(projectId: string) {
   return act(async (workspaceId) => {
-    const result = await startBuild(workspaceId, projectId);
-    revalidatePath(`/studio/${projectId}`);
+    await requireProjectAccess(projectId);
+    return getBuildOptions(workspaceId, projectId);
+  });
+}
+
+/** Re-estimates when the operator changes provider, model or quality. */
+export async function estimateBuildAction(input: {
+  provider: string;
+  model: string;
+  quality: string;
+}) {
+  return act(async () => {
+    const parsed = z
+      .object({
+        provider: z.enum(AI_PROVIDERS),
+        model: z.string().min(1).max(120),
+        quality: z.enum(BUILD_QUALITIES),
+      })
+      .parse(input);
+    return estimateBuild(
+      parsed.provider,
+      parsed.model,
+      parsed.quality as BuildQuality,
+      parsed.provider === "mock" ? "scaffold" : "agent",
+    );
+  });
+}
+
+/**
+ * Starts a website build.
+ *
+ * The one and only entry point from the UI. It requires a fully-specified
+ * request, so there is no argument shape that means "just build something" -
+ * which is what makes "a build never starts on its own" a property of the code
+ * rather than a promise in a README.
+ */
+export async function startBuildAction(raw: unknown) {
+  return act(async (workspaceId) => {
+    const req = buildRequestSchema.parse(raw);
+    const { ctx } = await requireProjectAccess(req.projectId);
+
+    const result = await startBuild(
+      workspaceId,
+      req.projectId,
+      {
+        provider: req.provider,
+        model: req.model,
+        quality: req.quality,
+        overrideStage: req.overrideStage,
+        notes: req.notes,
+      },
+      { userId: ctx.userId },
+    );
+
+    revalidatePath(`/studio/${req.projectId}`);
     revalidatePath("/studio");
-    return { version: result.version, qualityScore: result.qualityScore };
+    revalidatePath(`/prospects/${result.versionId}`);
+    return result;
+  });
+}
+
+export async function setVersionApprovalAction(
+  versionId: string,
+  approval: "draft" | "approved" | "rejected",
+  note?: string,
+): Promise<ActionResult> {
+  return act(async (workspaceId) => {
+    const parsed = z.enum(["draft", "approved", "rejected"]).parse(approval);
+    const { version } = await requireVersionAccess(versionId);
+    await setVersionApproval(workspaceId, versionId, parsed, note?.slice(0, 500) ?? null);
+    revalidatePath(`/studio/${version.projectId}`);
+    return undefined;
   });
 }
 
@@ -393,7 +487,18 @@ export async function setStageAction(
       include: { business: { select: { name: true } } },
     });
     if (!prospect) throw toAppError(new Error("Prospect not found."));
-    await prisma.prospect.update({ where: { id: prospectId }, data: { stage: parsed } });
+
+    // Record when a meeting actually happened, so the build gate can tell
+    // "we spoke" from "we guessed". Changing the stage does NOT start a build,
+    // generate a brief, draft a message or call any provider - this action
+    // writes one column and logs it, and a test asserts that.
+    const meetingAt =
+      parsed === "meeting-completed" && !prospect.meetingAt ? new Date() : prospect.meetingAt;
+
+    await prisma.prospect.update({
+      where: { id: prospectId },
+      data: { stage: parsed, meetingAt },
+    });
     await logActivity({
       workspaceId,
       prospectId,

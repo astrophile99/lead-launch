@@ -3,7 +3,8 @@ import { prisma } from "@/db/client";
 import { AppError, toAppError } from "@/lib/errors";
 import { extractJson, toJson } from "@/lib/json";
 import { startJob } from "@/lib/logger";
-import { resolveRoute } from "@/providers/ai/router";
+import { pinRoute, resolveRoute } from "@/providers/ai/router";
+import type { AIProviderId } from "@/config/ai";
 import type { AIRequest } from "@/providers/ai/types";
 
 /**
@@ -29,6 +30,11 @@ export type RunJobOptions<T> = {
   parse: (raw: string) => T;
   /** Attempts (including the first). */
   maxAttempts?: number;
+  /** Attribution, so spend can be reported per campaign or per website. */
+  campaignId?: string;
+  projectId?: string;
+  /** Pins the route, overriding workspace configuration for this one call. */
+  route?: { provider: AIProviderId; model: string };
 };
 
 export type JobOutcome<T> = {
@@ -38,10 +44,17 @@ export type JobOutcome<T> = {
   model: string;
   isMock: boolean;
   degradedReason: string | null;
+  /** Real usage as reported by the provider. Null where it reports none. */
+  tokensIn: number | null;
+  tokensOut: number | null;
+  costUsd: number | null;
+  durationMs: number | null;
 };
 
 export async function runAIJob<T>(opts: RunJobOptions<T>): Promise<JobOutcome<T>> {
-  const route = await resolveRoute(opts.workspaceId, opts.capability);
+  const route = opts.route
+    ? await pinRoute(opts.workspaceId, opts.capability, opts.route)
+    : await resolveRoute(opts.workspaceId, opts.capability);
   const log = startJob(`ai.${opts.type}`, {
     capability: opts.capability,
     provider: route.provider.id,
@@ -61,6 +74,8 @@ export async function runAIJob<T>(opts: RunJobOptions<T>): Promise<JobOutcome<T>
       entityType: opts.entityType ?? null,
       entityId: opts.entityId ?? null,
       inputJson: toJson(opts.inputSummary),
+      campaignId: opts.campaignId ?? null,
+      projectId: opts.projectId ?? null,
       startedAt: new Date(),
       attempts: 0,
     },
@@ -110,6 +125,10 @@ export async function runAIJob<T>(opts: RunJobOptions<T>): Promise<JobOutcome<T>
         model: res.model,
         isMock: res.isMock,
         degradedReason: route.degradedReason,
+        tokensIn: res.tokensIn ?? null,
+        tokensOut: res.tokensOut ?? null,
+        costUsd: res.costUsd ?? null,
+        durationMs: res.durationMs ?? null,
       };
     } catch (e) {
       lastError = toAppError(e);

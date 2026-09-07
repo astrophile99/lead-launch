@@ -1,5 +1,6 @@
 import {
   DEFAULT_ROUTING,
+  modelSpec,
   type AICapability,
   type AIProviderId,
 } from "@/config/ai";
@@ -94,6 +95,63 @@ export async function resolveRoute(
     fallback: null,
     degraded: true,
     degradedReason: `No API key for ${primary.label} and no usable fallback. Output is composed from stored data, not reasoned.`,
+  };
+}
+
+/**
+ * Resolves an explicitly chosen provider and model, rather than the workspace's
+ * configured route for the capability.
+ *
+ * Used by the Build Website flow, where the operator picks the model in the
+ * confirmation dialog. The choice still has to be a model this build can
+ * actually use: an unconfigured provider degrades to the composer with a
+ * reason, exactly as the configured route would, rather than failing silently
+ * or pretending the chosen model ran.
+ */
+export async function pinRoute(
+  workspaceId: string,
+  capability: AICapability,
+  choice: { provider: AIProviderId; model: string },
+): Promise<Route> {
+  const spec = modelSpec(choice.provider, choice.model);
+  if (!spec) {
+    return {
+      provider: PROVIDERS.mock,
+      model: "mock-deterministic",
+      fallback: null,
+      degraded: true,
+      degradedReason: `"${choice.model}" is not in the model catalogue for ${choice.provider}.`,
+    };
+  }
+  if (!spec.supports.includes(capability)) {
+    return {
+      provider: PROVIDERS.mock,
+      model: "mock-deterministic",
+      fallback: null,
+      degraded: true,
+      degradedReason: `${spec.label} does not support ${capability}.`,
+    };
+  }
+
+  const provider = getAIProvider(choice.provider);
+  if (provider.isConfigured()) {
+    return {
+      provider,
+      model: choice.model,
+      fallback: null,
+      degraded: false,
+      degradedReason: null,
+    };
+  }
+
+  // Fall back to whatever the workspace has configured for this capability
+  // rather than to the composer, so a chosen-but-unkeyed model still produces
+  // real work when another provider is available.
+  const configured = await resolveRoute(workspaceId, capability);
+  return {
+    ...configured,
+    degraded: true,
+    degradedReason: `${provider.label} has no API key, so ${spec.label} could not be used. ${configured.degradedReason ?? `Ran on ${configured.provider.label} instead.`}`,
   };
 }
 

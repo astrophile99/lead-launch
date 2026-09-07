@@ -282,3 +282,56 @@ export type OutreachDraft = {
   body: string;
   observations: string[];
 };
+
+// ------------------------------------------------------------ website build
+
+/**
+ * The build dialog's view model.
+ *
+ * Lives here rather than beside the service so a client component can import
+ * it without dragging Prisma into the browser bundle (see AGENTS.md,
+ * "Client/server boundary" - the typechecker does not catch that, only the
+ * production build does).
+ */
+export type BuildEstimateView = {
+  provider: string;
+  model: string;
+  modelLabel: string;
+  quality: "fast" | "balanced" | "premium";
+  strategy: "scaffold" | "agent";
+  calls: number;
+  tokensIn: number;
+  tokensOut: number;
+  priced: boolean;
+  lowUsd: number | null;
+  highUsd: number | null;
+  iterations: number;
+  qaCycles: number;
+  assumptions: string[];
+};
+
+export type BuildOptionsView = {
+  projectId: string;
+  prospectId: string;
+  businessName: string;
+  industry: string;
+  currentWebsite: string | null;
+  stage: string;
+  stageLabel: string;
+  auditScore: number | null;
+  opportunityScore: number | null;
+  weaknesses: string[];
+  concept: string | null;
+  hasBrief: boolean;
+  gate: { allowed: boolean; requiresOverride: boolean; reason: string };
+  nextVersion: number;
+  providers: {
+    id: string;
+    label: string;
+    configured: boolean;
+    models: { id: string; label: string; tier: string; supported: boolean }[];
+  }[];
+  recommended: { provider: string; model: string; reason: string } | null;
+  storage: { label: string; durable: boolean; detail: string };
+  visualQaAvailable: boolean;
+};

@@ -43,6 +43,28 @@ export const appConfig = {
     googleOAuthEnabled: bool("AUTH_GOOGLE_ENABLED", false),
   },
 
+  security: {
+    /**
+     * AES-256-GCM key protecting OAuth tokens at rest. Base64 32 bytes, or any
+     * longer passphrase (hashed to 32). With no key the app refuses to store a
+     * provider token rather than falling back to plaintext.
+     */
+    tokenEncryptionKey: env("TOKEN_ENCRYPTION_KEY"),
+  },
+
+  /**
+   * Gmail, via Google OAuth 2.0. There is no password field anywhere in this
+   * application and there never will be - an app that asks for a Gmail password
+   * is either phishing or about to be locked out by Google, and both are worse
+   * than the OAuth dance.
+   */
+  google: {
+    clientId: env("GOOGLE_OAUTH_CLIENT_ID"),
+    clientSecret: env("GOOGLE_OAUTH_CLIENT_SECRET"),
+    /** Must exactly match an authorised redirect URI on the OAuth client. */
+    redirectUri: env("GOOGLE_OAUTH_REDIRECT_URI"),
+  },
+
   ai: {
     anthropic: env("ANTHROPIC_API_KEY"),
     openai: env("OPENAI_API_KEY"),
@@ -90,6 +112,33 @@ export const appConfig = {
     rateLimitPerHour: int("OUTREACH_RATE_LIMIT_PER_HOUR", 20),
   },
 
+  /**
+   * Research budget controls. Every one of these exists to stop the recurring
+   * cost of finding out about a business from growing without anyone noticing.
+   */
+  research: {
+    /** Hard ceiling on pages fetched per site, however many links are found. */
+    maxPagesPerSite: int("RESEARCH_MAX_PAGES", 6),
+    /** Refuse a response larger than this rather than buffering it. */
+    maxBytesPerPage: int("RESEARCH_MAX_BYTES", 1_500_000),
+    fetchTimeoutMs: int("RESEARCH_TIMEOUT_MS", 12_000),
+    maxRedirects: int("RESEARCH_MAX_REDIRECTS", 3),
+    /** Minimum gap between two requests to the same host, in ms. */
+    hostThrottleMs: int("RESEARCH_HOST_THROTTLE_MS", 1_200),
+    /** How long a cached research record stays fresh. */
+    cacheTtlDays: int("RESEARCH_CACHE_TTL_DAYS", 30),
+    /** Honour robots.txt on business sites. Off only for local testing. */
+    respectRobots: bool("RESEARCH_RESPECT_ROBOTS", true),
+    /** Identifies this crawler to the sites it visits. */
+    userAgent:
+      env("RESEARCH_USER_AGENT") ??
+      "LeadLaunchBot/1.0 (+https://github.com/astrophile99/lead-launch; local business research)",
+    /** Overpass endpoint for the free discovery layer. */
+    overpassUrl: env("OVERPASS_API_URL") ?? "https://overpass-api.de/api/interpreter",
+    /** Google Places calls included in the monthly free allowance. */
+    googleFreeCallsPerMonth: int("GOOGLE_PLACES_FREE_CALLS", 5_000),
+  },
+
   storage: {
     /** supabase | none. Where generated website assets persist in production. */
     provider: env("STORAGE_PROVIDER") ?? "none",
@@ -126,6 +175,14 @@ export const capabilities = {
   },
   get hasAuth() {
     return Boolean(appConfig.auth.supabaseUrl && appConfig.auth.supabaseAnonKey);
+  },
+  get hasGoogleOAuth() {
+    return Boolean(
+      appConfig.google.clientId && appConfig.google.clientSecret && appConfig.google.redirectUri,
+    );
+  },
+  get canStoreSecrets() {
+    return Boolean(appConfig.security.tokenEncryptionKey);
   },
   get hasStorage() {
     return appConfig.storage.provider !== "none";

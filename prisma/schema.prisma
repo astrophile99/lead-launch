@@ -45,6 +45,10 @@ model Workspace {
   optOuts       OutreachOptOut[]
   whatsapp      WhatsAppAccount?
   instagram     InstagramAccount?
+  gmail         GmailAccount?
+  research      ResearchRecord[]
+  providerUsage ProviderUsage[]
+  webhookEvents WebhookEvent[]
 }
 
 model User {
@@ -145,9 +149,10 @@ model Business {
   dedupeKey    String
   discoveredAt DateTime @default(now())
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  campaign  Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  workspace Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  campaign  Campaign?        @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   prospect  Prospect?
+  research  ResearchRecord[]
 
   @@unique([workspaceId, dedupeKey])
   @@index([workspaceId, city])
@@ -161,9 +166,13 @@ model Prospect {
   businessId  String  @unique
   campaignId  String?
 
-  stage    String  @default("discovered")
+  stage    String  @default("new")
   priority String  @default("normal") // low | normal | high
   ownerId  String?
+
+  /// Set when the operator records that a meeting actually happened, so the
+  /// build gate can tell "we spoke" from "we guessed".
+  meetingAt DateTime?
 
   estimatedValue Int?
   serviceType    String?
@@ -327,11 +336,32 @@ model WebsiteBuild {
   id        String @id @default(cuid())
   projectId String
 
-  status    String  @default("queued") // queued | planning | building | testing | reviewing | complete | failed
+  status    String  @default("queued") // queued | planning | building | reviewing | packaging | complete | failed
   stage     String?
   provider  String?
   model     String?
   iteration Int     @default(1)
+
+  /// How this build was asked for. `strategy` is what actually ran, which is
+  /// not always what was requested - an agent build with no code-generation
+  /// key falls back to the scaffold and says so here.
+  strategy       String  @default("scaffold") // scaffold | agent
+  quality        String  @default("balanced") // fast | balanced | premium
+  requestedBy    String?
+  stageAtRequest String?
+  stageOverride  Boolean @default(false)
+  notes          String?
+
+  /// What we told the operator it would cost, kept so estimate and actual can
+  /// be compared rather than quietly forgotten.
+  estimateJson String?
+
+  tokensIn     Int?
+  tokensOut    Int?
+  tokensCached Int?
+  costUsd      Float?
+  iterations   Int    @default(1)
+  qaCycles     Int    @default(0)
 
   qualityScore Int?
   reportJson   String? // JSON: QualityReport
@@ -359,13 +389,59 @@ model WebsiteVersion {
   reportJson   String?
   provider     String?
   model        String?
-  createdAt    DateTime @default(now())
 
-  project     WebsiteProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  build       WebsiteBuild?  @relation(fields: [buildId], references: [id], onDelete: SetNull)
+  /// draft until a human has looked at it. Nothing marks itself approved.
+  approval   String    @default("draft") // draft | approved | rejected
+  approvedAt DateTime?
+  reviewNote String?
+
+  /// The generated README, kept with the version it describes.
+  readmeText String?
+
+  /// Real usage for this version, so the cost dashboard can attribute spend
+  /// per website rather than per workspace.
+  tokensIn   Int?
+  tokensOut  Int?
+  costUsd    Float?
+  durationMs Int?
+  strategy   String   @default("scaffold")
+  quality    String   @default("balanced")
+  createdAt  DateTime @default(now())
+
+  project     WebsiteProject    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  build       WebsiteBuild?     @relation(fields: [buildId], references: [id], onDelete: SetNull)
   deployments Deployment[]
+  artifacts   WebsiteArtifact[]
 
   @@unique([projectId, version])
+}
+
+/// One file belonging to one version.
+///
+/// The local filesystem is a build scratch directory; this table plus the
+/// storage provider is the source of truth, which is what makes a build
+/// survive a restart on a serverless host.
+model WebsiteArtifact {
+  id        String @id @default(cuid())
+  versionId String
+
+  path        String
+  bytes       Int
+  contentType String @default("text/plain")
+  sha256      String
+
+  /// Where the bytes live. `inline` keeps them in `content` (fine for the text
+  /// files a generated site is made of); anything else is a storage key.
+  storageProvider String  @default("inline")
+  storageKey      String?
+  content         String?
+
+  createdAt DateTime @default(now())
+
+  version WebsiteVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+
+  @@unique([versionId, path])
+  @@index([versionId])
 }
 
 model Deployment {
@@ -458,8 +534,18 @@ model OutreachMessage {
   variant      String  @default("normal") // short | normal | detailed | followup1 | followup2 | final
   subject      String?
   body         String
-  status       String  @default("draft") // draft | approved | sent | replied | bounced | opted-out
+  /// draft -> approved -> sending -> sent. `approved` is never `sent`: the two
+  /// are separate rows in this column precisely so the UI cannot conflate them.
+  status       String  @default("draft") // draft | approved | sending | sent | failed | replied | bounced | opted-out
   sequenceStep Int     @default(0)
+
+  /// The address this will actually go to, resolved and frozen at draft time so
+  /// the confirmation dialog shows the recipient that will be used.
+  recipient     String?
+  /// Which transport will carry it (gmail | resend | whatsapp-cloud | ...).
+  transport     String?
+  generatedByAI Boolean   @default(true)
+  editedAt      DateTime?
 
   observationsJson String? // JSON: string[] of grounded observations used
   provider         String?
@@ -469,6 +555,12 @@ model OutreachMessage {
 
   /// Provider-side identifiers and state, for channels that report delivery.
   externalId    String?
+  /// Provider-side conversation id. Only ever set from a value the provider
+  /// actually returned; never synthesised so a thread looks continuous.
+  threadId      String?
+  /// The provider's own draft id, where the provider has real drafts (Gmail).
+  draftId       String?
+  costUsd       Float?
   templateName  String?
   variablesJson String?
   deliveredAt   DateTime?
@@ -483,6 +575,7 @@ model OutreachMessage {
   events   OutreachEvent[]
 
   @@index([prospectId])
+  @@index([status])
 }
 
 model OutreachEvent {
@@ -758,4 +851,148 @@ model OutreachOptOut {
 
   @@unique([workspaceId, channel, identifier])
   @@index([workspaceId])
+}
+
+// ---------------------------------------------------------------- Gmail
+
+/// A connected Google account, authorised through OAuth 2.0.
+///
+/// SECURITY: the tokens are stored encrypted (AES-256-GCM, key from
+/// TOKEN_ENCRYPTION_KEY) and are only ever decrypted inside the Gmail provider
+/// on the server. No route, action or component returns them, and the refresh
+/// token in particular never leaves this process. There is no password field
+/// here and there never will be - Gmail is reached through OAuth or not at all.
+model GmailAccount {
+  id          String @id @default(cuid())
+  workspaceId String @unique
+
+  email       String
+  displayName String?
+  /// Space-separated scopes actually granted, as reported by the token
+  /// response - not the ones we asked for.
+  scopes      String  @default("")
+
+  accessTokenEnc  String?
+  refreshTokenEnc String?
+  expiresAt       DateTime?
+
+  /// Sender identity used on outgoing mail. Defaults to the connected address.
+  fromName   String?
+  replyTo    String?
+  signature  String?
+  dailyLimit Int     @default(50)
+
+  status        String    @default("not-connected") // not-connected | connected | expired | error
+  lastError     String?
+  lastCheckedAt DateTime?
+  connectedAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+/// A pending OAuth authorisation. Holds the CSRF state and the PKCE verifier
+/// between the redirect out and the callback back; rows are single-use and
+/// expire in ten minutes.
+model OAuthState {
+  id           String    @id @default(cuid())
+  provider     String // google
+  state        String    @unique
+  codeVerifier String
+  workspaceId  String
+  redirectTo   String?
+  expiresAt    DateTime
+  usedAt       DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@index([expiresAt])
+}
+
+// ---------------------------------------------------------------- research
+
+/// Cached research about one business.
+///
+/// Research is the recurring cost in this product, so nothing is fetched twice
+/// without being asked for. A record carries what was fetched, from where, when,
+/// and a hash of the response, so "Refresh research" can report what actually
+/// changed rather than just re-spending.
+model ResearchRecord {
+  id          String @id @default(cuid())
+  workspaceId String
+  businessId  String
+
+  /// crawl | osm | google-places | pagespeed
+  source String
+  url    String?
+
+  status String  @default("ok") // ok | partial | failed | blocked
+  error  String?
+
+  /// Extracted, structured result. Shape depends on `source`.
+  dataJson  String?
+  /// Which URLs were actually fetched, with status and byte count each.
+  pagesJson String?
+
+  contentHash  String?
+  bytesFetched Int     @default(0)
+  requests     Int     @default(0)
+  durationMs   Int?
+
+  fetchedAt DateTime  @default(now())
+  expiresAt DateTime?
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  business  Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, source])
+  @@index([workspaceId, fetchedAt])
+}
+
+/// Monthly call counters per external provider, so the Google free allowance
+/// is a number the user can see rather than a surprise at the end of the month.
+model ProviderUsage {
+  id          String @id @default(cuid())
+  workspaceId String
+
+  provider String // google-places | overpass | pagespeed | gmail | meta
+  /// YYYY-MM, in UTC.
+  period   String
+
+  requests      Int       @default(0)
+  cachedHits    Int       @default(0)
+  errors        Int       @default(0)
+  estimatedUsd  Float?
+  lastRequestAt DateTime?
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, provider, period])
+}
+
+// ---------------------------------------------------------------- webhooks
+
+/// Every inbound webhook we accepted, keyed by the provider's own event id.
+///
+/// Two jobs: idempotency (Meta retries aggressively, and a retried reply must
+/// not appear twice in a prospect's timeline) and an audit trail of what was
+/// received, including what was rejected and why.
+model WebhookEvent {
+  id          String  @id @default(cuid())
+  workspaceId String?
+
+  provider   String // whatsapp | instagram
+  externalId String
+  signature  String?
+
+  status String // accepted | duplicate | rejected
+  reason String?
+  bytes  Int     @default(0)
+
+  receivedAt DateTime @default(now())
+
+  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, externalId])
+  @@index([receivedAt])
 }

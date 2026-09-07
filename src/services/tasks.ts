@@ -25,7 +25,21 @@ export type ProspectState = {
   lastContactAt: Date | null;
 };
 
+/**
+ * The next action is a *sales* action.
+ *
+ * Deliberately: nothing here ever suggests building a website before a
+ * conversation has happened. Building is expensive, and a site nobody asked
+ * for is the most expensive thing this app can do. Once a meeting is recorded
+ * the suggestion appears, and even then it is a suggestion — the build itself
+ * is always started by hand.
+ */
 export function suggestNextAction(s: ProspectState): { title: string; dueInDays: number } {
+  if (s.stage === "won") return { title: "Kick off the project", dueInDays: 2 };
+  if (s.stage === "lost" || s.stage === "not-interested") {
+    return { title: "Archive or revisit next quarter", dueInDays: 90 };
+  }
+
   if (!s.hasAudit) {
     return {
       title: s.hasWebsite ? "Audit the website" : "Confirm there is no website, then audit",
@@ -33,31 +47,34 @@ export function suggestNextAction(s: ProspectState): { title: string; dueInDays:
     };
   }
   if (!s.hasOpportunity) return { title: "Run the opportunity analysis", dueInDays: 1 };
-  if (s.stage === "won") return { title: "Kick off the project", dueInDays: 2 };
-  if (s.stage === "lost" || s.stage === "not-interested") {
-    return { title: "Archive or revisit next quarter", dueInDays: 90 };
-  }
+
   if (s.hasDraftMessage && !s.hasApprovedMessage) {
     return { title: "Review and approve the outreach draft", dueInDays: 1 };
-  }
-  if (!s.hasBrief && !s.hasSentMessage) {
-    return { title: "Generate a website concept to pitch against", dueInDays: 2 };
-  }
-  if (s.hasBrief && !s.hasReadyWebsite && s.stage !== "building") {
-    return { title: "Approve the brief and start the build", dueInDays: 2 };
-  }
-  if (s.hasReadyWebsite && !s.hasDraftMessage) {
-    return { title: "Draft outreach referencing the new site", dueInDays: 1 };
   }
   if (s.hasApprovedMessage && !s.hasSentMessage) {
     return { title: "Send the approved message", dueInDays: 1 };
   }
-  if (s.stage === "contacted" || s.stage === "follow-up") {
-    return { title: "Follow up on the last message", dueInDays: 3 };
+  if (!s.hasSentMessage && !s.hasDraftMessage) {
+    return { title: "Draft the first message", dueInDays: 1 };
   }
-  if (s.stage === "meeting") return { title: "Send the proposal", dueInDays: 2 };
+
+  if (s.stage === "responded") return { title: "Read the reply and book a call", dueInDays: 1 };
+  if (s.stage === "qualified") return { title: "Get a meeting in the diary", dueInDays: 2 };
+
+  // Only past this line does building enter the conversation at all.
+  if (s.stage === "meeting-scheduled") {
+    return { title: "Prepare for the call", dueInDays: 1 };
+  }
+  if (s.stage === "meeting-completed") {
+    return s.hasReadyWebsite
+      ? { title: "Review the built site and send the proposal", dueInDays: 2 }
+      : { title: "Build the website you discussed, then send the proposal", dueInDays: 3 };
+  }
   if (s.stage === "proposal") return { title: "Chase the proposal", dueInDays: 4 };
   if (s.stage === "negotiation") return { title: "Confirm terms and close", dueInDays: 3 };
+  if (s.stage === "contacted") {
+    return { title: "Follow up on the last message", dueInDays: 3 };
+  }
   return { title: "Review this prospect", dueInDays: 7 };
 }
 

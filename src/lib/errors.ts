@@ -13,6 +13,8 @@ export type ErrorKind =
   | "blocked"
   | "invalid-input"
   | "not-found"
+  | "forbidden"
+  | "unauthenticated"
   | "conflict"
   | "build-failed"
   | "internal";
@@ -88,6 +90,8 @@ export const HTTP_STATUS_BY_KIND: Record<ErrorKind, number> = {
   blocked: 502,
   "invalid-input": 400,
   "not-found": 404,
+  forbidden: 403,
+  unauthenticated: 401,
   conflict: 409,
   "build-failed": 500,
   internal: 500,
