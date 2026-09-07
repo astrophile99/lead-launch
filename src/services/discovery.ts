@@ -327,7 +327,7 @@ async function persistRecord(
       workspaceId,
       businessId: business.id,
       campaignId,
-      stage: "discovered",
+      stage: "new",
       leadSource: source,
     },
   });

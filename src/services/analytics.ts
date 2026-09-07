@@ -57,7 +57,9 @@ export async function getOverview(workspaceId: string): Promise<Overview> {
       where: { prospect: { workspaceId }, status: { in: ["sent", "replied"] } },
     }),
     prisma.outreachMessage.count({ where: { prospect: { workspaceId }, status: "replied" } }),
-    prisma.prospect.count({ where: { workspaceId, stage: "meeting" } }),
+    prisma.prospect.count({
+      where: { workspaceId, stage: { in: ["meeting-scheduled", "meeting-completed"] } },
+    }),
     prisma.prospect.count({ where: { workspaceId, stage: "won" } }),
     prisma.prospect.count({ where: { workspaceId, business: { isMock: true } } }),
     prisma.prospect.aggregate({

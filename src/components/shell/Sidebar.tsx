@@ -49,7 +49,15 @@ export function Sidebar({
 
   return (
     <aside className="hidden lg:flex w-[13.5rem] shrink-0 border-r border-line bg-surface flex-col">
-      <div className="h-12 flex items-center gap-2 px-3.5 border-b border-line shrink-0">
+      {/*
+        The wordmark links to Home. Same rule as the mobile mark in Topbar:
+        the logo is a Home button on every page, and never anything else.
+      */}
+      <Link
+        href="/"
+        aria-label="Go to Overview"
+        className="h-12 flex items-center gap-2 px-3.5 border-b border-line shrink-0 hover:bg-surface-2 transition-colors"
+      >
         <span
           aria-hidden
           className="size-5 rounded-sm bg-accent text-accent-ink text-[10px] font-bold grid place-items-center"
@@ -59,7 +67,7 @@ export function Sidebar({
         <span className="text-[13px] font-semibold tracking-[-0.015em]">
           Lead <span className="text-ink-4">&rarr;</span> Launch
         </span>
-      </div>
+      </Link>
 
       <nav className="flex-1 overflow-y-auto flex flex-col gap-5 px-2.5 py-3" aria-label="Sections">
         {NAV_GROUPS.map((group) => {

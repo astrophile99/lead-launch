@@ -5,7 +5,6 @@ import { getWorkspaceContext } from "@/db/workspace";
 import { fromJson } from "@/lib/json";
 import { formatDateTime, hostOf, relativeTime } from "@/lib/utils";
 import { getDeploymentProvider } from "@/providers/deployment";
-import { resolveRoute } from "@/providers/ai/router";
 import type { QualityCheck, QualityReport, WebsiteBrief } from "@/types";
 import { QueryTabs } from "@/components/ui/Tabs";
 import {
@@ -25,10 +24,12 @@ import { BuildTimeline, parseBuildLog } from "@/components/features/BuildTimelin
 import { SitePreview } from "@/components/features/SitePreview";
 import {
   BriefEditor,
-  BuildControls,
   DeployControls,
   RestoreVersionButton,
 } from "@/components/features/StudioActions";
+import { BuildWebsiteButton } from "@/components/features/BuildWizard";
+import { VersionList, type VersionRow } from "@/components/features/VersionReview";
+import { buildGateFor, normaliseStage } from "@/config/pipeline";
 
 export const dynamic = "force-dynamic";
 
@@ -68,9 +69,31 @@ export default async function StudioProjectPage({
   const latest = project.versions[0] ?? null;
   const report = latest ? fromJson<QualityReport | null>(latest.reportJson, null) : null;
   const deployment = getDeploymentProvider();
-  const codeRoute = await resolveRoute(workspaceId, "codeGeneration");
   const before = project.prospect.websiteScore;
   const after = latest?.qualityScore ?? null;
+  const stage = normaliseStage(project.prospect.stage);
+  const gate = buildGateFor(stage);
+
+  const versionRows: VersionRow[] = project.versions.map((v) => ({
+    id: v.id,
+    version: v.version,
+    createdAt: v.createdAt.toISOString(),
+    provider: v.provider,
+    model: v.model,
+    strategy: v.strategy,
+    quality: v.quality,
+    qualityScore: v.qualityScore,
+    approval: v.approval,
+    approvedAt: v.approvedAt?.toISOString() ?? null,
+    reviewNote: v.reviewNote,
+    changes: fromJson<string[]>(v.changesJson, []),
+    fileCount: fromJson<{ path: string }[]>(v.filesJson, []).length,
+    tokensIn: v.tokensIn,
+    tokensOut: v.tokensOut,
+    costUsd: v.costUsd,
+    durationMs: v.durationMs,
+    hasReadme: Boolean(v.readmeText),
+  }));
 
   const tabs = [
     { id: "preview", label: "Preview" },
@@ -108,15 +131,17 @@ export default async function StudioProjectPage({
           </>
         }
         actions={
-          <BuildControls
-            projectId={project.id}
-            hasVersions={project.versions.length > 0}
-            strategyLabel={
-              codeRoute.provider.isMock
-                ? "Built-in scaffolder — deterministic, no model involved."
-                : `Agent path via ${codeRoute.provider.label} / ${codeRoute.model}.`
-            }
-          />
+          <div className="flex flex-col items-end gap-1.5">
+            <BuildWebsiteButton
+              projectId={project.id}
+              hasVersions={project.versions.length > 0}
+            />
+            <p className="text-[11px] text-ink-4 text-right max-w-64">
+              {gate.requiresOverride
+                ? "You will be asked to confirm building outside a meeting stage."
+                : "Opens the build dialog. Nothing runs until you confirm."}
+            </p>
+          </div>
         }
       />
 
@@ -231,52 +256,32 @@ export default async function StudioProjectPage({
         ) : null}
 
         {tab === "versions" ? (
-          <Panel>
-            <PanelHeader
-              title="Versions"
-              hint="Every successful build archives its exact files, so a regression can be rolled back."
-            />
-            {project.versions.length === 0 ? (
-              <EmptyState title="No versions" body="Versions appear after the first successful build." />
-            ) : (
-              <Table>
-                <thead>
-                  <tr>
-                    <Th>Version</Th>
-                    <Th>Built</Th>
-                    <Th>Produced by</Th>
-                    <Th className="text-right">Quality</Th>
-                    <Th className="text-right">Files</Th>
-                    <Th>Changes</Th>
-                    <Th />
-                  </tr>
-                </thead>
-                <tbody>
+          <div className="flex flex-col gap-4">
+            <InfoNote>
+              Every build produces a new version and archives its exact files. Nothing overwrites a
+              previous version, because iterative AI editing regularly makes a site worse and you
+              need the one that was fine.
+            </InfoNote>
+            <VersionList versions={versionRows} />
+            {project.versions.length > 1 ? (
+              <Panel>
+                <PanelHeader
+                  title="Restore into the preview"
+                  hint="Copies a stored version back over the working directory so the in-app preview shows it. It does not change which version is approved."
+                />
+                <div className="px-4 py-3 flex flex-wrap gap-2">
                   {project.versions.map((v) => (
-                    <tr key={v.id} className="hover:bg-surface-2 transition-colors">
-                      <Td className="text-ink font-medium">v{v.version}</Td>
-                      <Td className="text-ink-3">{formatDateTime(v.createdAt)}</Td>
-                      <Td className="text-ink-3">
-                        {v.provider === "builtin-scaffold" ? "Built-in scaffolder" : `${v.provider} / ${v.model}`}
-                      </Td>
-                      <Td className="text-right"><ScoreBadge score={v.qualityScore} /></Td>
-                      <Td className="tabular text-right">
-                        {fromJson<{ path: string }[]>(v.filesJson, []).length}
-                      </Td>
-                      <Td className="text-ink-3">{fromJson<string[]>(v.changesJson, []).join("; ")}</Td>
-                      <Td className="text-right">
-                        <RestoreVersionButton
-                          projectId={project.id}
-                          versionId={v.id}
-                          version={v.version}
-                        />
-                      </Td>
-                    </tr>
+                    <RestoreVersionButton
+                      key={v.id}
+                      projectId={project.id}
+                      versionId={v.id}
+                      version={v.version}
+                    />
                   ))}
-                </tbody>
-              </Table>
-            )}
-          </Panel>
+                </div>
+              </Panel>
+            ) : null}
+          </div>
         ) : null}
 
         {tab === "builds" ? (

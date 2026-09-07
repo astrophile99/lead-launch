@@ -191,13 +191,25 @@ export function Topbar({
 }) {
   return (
     <header className="h-12 shrink-0 border-b border-line bg-surface flex items-center gap-2 sm:gap-3 px-3 sm:px-4 sticky top-0 z-30">
-      {/* The mark is the only branding on mobile, where the sidebar is gone. */}
-      <span
-        aria-hidden
-        className="lg:hidden size-5 shrink-0 rounded-sm bg-accent text-accent-ink text-[10px] font-bold grid place-items-center"
+      {/*
+        The mark is a link to Home, on every page, on every breakpoint.
+        It is not a menu toggle and it does not go back - a logo that does
+        something different depending on where you are is a logo you stop
+        trusting. The mobile menu has its own control in the bottom bar.
+      */}
+      <Link
+        href="/"
+        aria-label="Go to Overview"
+        title="Overview"
+        className="lg:hidden size-8 -ml-1 shrink-0 grid place-items-center rounded-sm hover:bg-surface-2 transition-colors"
       >
-        L
-      </span>
+        <span
+          aria-hidden
+          className="size-5 rounded-sm bg-accent text-accent-ink text-[10px] font-bold grid place-items-center"
+        >
+          L
+        </span>
+      </Link>
 
       <div className="hidden sm:flex items-center gap-2 min-w-0">
         <span className="text-[12.5px] text-ink-2 truncate font-medium">{workspaceName}</span>

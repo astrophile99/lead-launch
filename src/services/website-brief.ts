@@ -183,14 +183,10 @@ export async function generateBrief(workspaceId: string, prospectId: string) {
     update: { briefJson: toJson(brief), status: "brief" },
   });
 
-  await prisma.prospect.update({
-    where: { id: prospectId },
-    data: {
-      stage: ["discovered", "qualified", "audited"].includes(prospect.stage)
-        ? "concept"
-        : prospect.stage,
-    },
-  });
+  // NOTE: generating a concept deliberately does not touch the sales stage.
+  // A brief is a document we wrote for ourselves; the prospect has not done
+  // anything. Advancing them here is what used to make production look like
+  // pipeline progress, and it is exactly the confusion this rework removes.
 
   await logActivity({
     workspaceId,

@@ -20,6 +20,7 @@ import {
   Textarea,
 } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
+import { BuildWebsiteButton } from "./BuildWizard";
 
 type Err = { message: string; remedy: string } | null;
 
@@ -52,12 +53,14 @@ export function ProspectPrimaryActions({
   hasOpportunityAnalysis,
   projectId,
   hasWebsite,
+  hasVersions,
 }: {
   prospectId: string;
   hasAudit: boolean;
   hasOpportunityAnalysis: boolean;
   projectId: string | null;
   hasWebsite: boolean;
+  hasVersions: boolean;
 }) {
   const router = useRouter();
   const { pending, error, note, run } = useAction();
@@ -96,7 +99,16 @@ export function ProspectPrimaryActions({
         </Button>
 
         {projectId ? (
-          <Button onClick={() => router.push(`/studio/${projectId}`)}>Open studio</Button>
+          <>
+            <Button onClick={() => router.push(`/studio/${projectId}`)}>Open studio</Button>
+            {/*
+              The only Build Website entry point on this page, and it opens a
+              dialog rather than starting anything. A build needs a provider, a
+              model, a quality mode and a confirmation - none of which exist
+              here, which is precisely why this button cannot start one.
+            */}
+            <BuildWebsiteButton projectId={projectId} hasVersions={hasVersions} />
+          </>
         ) : null}
       </div>
 

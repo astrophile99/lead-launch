@@ -1,19 +1,16 @@
 import Link from "next/link";
 import { appConfig } from "@/config/app";
-import { prisma } from "@/db/client";
 import { getWorkspaceContext } from "@/db/workspace";
-import { fromJson } from "@/lib/json";
-import { formatDateTime } from "@/lib/utils";
 import { messagingHealth } from "@/providers/messaging";
 import { listVoices } from "@/services/voice";
 import { QueryTabs } from "@/components/ui/Tabs";
-import { ChannelStatus, MessageActions } from "@/components/features/OutreachActions";
+import { ChannelStatus } from "@/components/features/OutreachActions";
+import { OutreachCenter } from "@/components/features/OutreachCenter";
+import { listQueue, parseQueueFilters } from "@/services/outreach-queue";
 import { VoiceStudio, type VoiceView } from "@/components/features/VoiceStudio";
 import {
   Badge,
-  EmptyState,
   InfoNote,
-  MockBadge,
   Panel,
   PanelHeader,
   PageHeader,
@@ -22,15 +19,6 @@ import {
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Outreach" };
-
-const STATUS_TONE: Record<string, "ok" | "warn" | "danger" | "neutral" | "info"> = {
-  draft: "warn",
-  approved: "info",
-  sent: "ok",
-  replied: "ok",
-  bounced: "danger",
-  "opted-out": "neutral",
-};
 
 const CHANNEL_LABEL: Record<string, string> = {
   email: "Email",
@@ -43,37 +31,15 @@ const CHANNEL_LABEL: Record<string, string> = {
 export default async function OutreachPage({ searchParams }: PageProps<"/outreach">) {
   const sp = await searchParams;
   const tab = (Array.isArray(sp.tab) ? sp.tab[0] : sp.tab) ?? "messages";
-  const status = (Array.isArray(sp.status) ? sp.status[0] : sp.status) ?? "draft";
   const { workspaceId } = await getWorkspaceContext();
 
-  const where = status === "all" ? {} : { status };
-
-  const [messages, counts, health, voices] = await Promise.all([
-    tab === "messages"
-      ? prisma.outreachMessage.findMany({
-          where: { prospect: { workspaceId }, ...where },
-          include: {
-            prospect: { include: { business: true } },
-            events: { orderBy: { at: "desc" }, take: 4 },
-          },
-          orderBy: { createdAt: "desc" },
-          take: 40,
-        })
-      : [],
-    prisma.outreachMessage.groupBy({
-      by: ["status"],
-      where: { prospect: { workspaceId } },
-      _count: { _all: true },
-    }),
+  const [queue, health, voices] = await Promise.all([
+    listQueue(workspaceId, parseQueueFilters(sp)),
     messagingHealth(workspaceId),
     listVoices(workspaceId),
   ]);
 
-  const byStatus = Object.fromEntries(counts.map((c) => [c.status, c._count._all])) as Record<
-    string,
-    number
-  >;
-  const healthByChannel = new Map(health.map((h) => [h.channel, h]));
+  const byStatus = queue.counts;
 
   const voiceViews: VoiceView[] = voices.map((v) => ({
     id: v.id,
@@ -96,19 +62,11 @@ export default async function OutreachPage({ searchParams }: PageProps<"/outreac
     { id: "channels", label: "Channels", count: health.filter((h) => h.configured).length },
   ];
 
-  const statusTabs = [
-    { id: "draft", label: "Awaiting approval", count: byStatus.draft ?? 0 },
-    { id: "approved", label: "Approved", count: byStatus.approved ?? 0 },
-    { id: "sent", label: "Sent", count: byStatus.sent ?? 0 },
-    { id: "replied", label: "Replied", count: byStatus.replied ?? 0 },
-    { id: "all", label: "All" },
-  ];
-
   return (
     <>
       <PageHeader
         title="Outreach"
-        description="Every message is written only from recorded audit observations, and nothing leaves the app without an explicit approval."
+        description="One queue for Gmail, WhatsApp and Instagram. Every message is written only from recorded observations, and nothing leaves the building until you read it and press send."
         meta={
           <>
             <Badge tone="neutral">Limit: {appConfig.outreach.rateLimitPerHour}/hour</Badge>
@@ -139,6 +97,7 @@ export default async function OutreachPage({ searchParams }: PageProps<"/outreac
         />
         <StatTile label="Approved" value={byStatus.approved ?? 0} />
         <StatTile label="Sent" value={byStatus.sent ?? 0} tone="ok" />
+
         <StatTile label="Replied" value={byStatus.replied ?? 0} tone="ok" />
         <StatTile label="Opted out" value={byStatus["opted-out"] ?? 0} />
       </div>
@@ -148,100 +107,9 @@ export default async function OutreachPage({ searchParams }: PageProps<"/outreac
       <div className="mt-5">
         {/* ------------------------------------------------------- messages */}
         {tab === "messages" ? (
-          <>
-            <div className="mb-4">
-              <QueryTabs
-                basePath="/outreach?tab=messages"
-                param="status"
-                current={status}
-                tabs={statusTabs}
-              />
-            </div>
-
-            <div className="flex flex-col gap-3">
-              {messages.length === 0 ? (
-                <Panel>
-                  <EmptyState
-                    title="Nothing here"
-                    body="Open a prospect that has been audited and draft a message. Drafts land here for review before anything is sent."
-                  />
-                </Panel>
-              ) : (
-                messages.map((m) => {
-                  const channelHealth = healthByChannel.get(
-                    m.channel as (typeof health)[number]["channel"],
-                  );
-                  const canTransmit = Boolean(channelHealth?.configured);
-                  return (
-                    <Panel key={m.id}>
-                      <PanelHeader
-                        title={
-                          <span className="flex flex-wrap items-center gap-2">
-                            <Link
-                              href={`/prospects/${m.prospectId}?tab=outreach`}
-                              className="hover:text-accent"
-                            >
-                              {m.prospect.business.name}
-                            </Link>
-                            <Badge tone={STATUS_TONE[m.status] ?? "neutral"}>{m.status}</Badge>
-                            <Badge tone="neutral">{CHANNEL_LABEL[m.channel] ?? m.channel}</Badge>
-                            <Badge tone="neutral">{m.variant}</Badge>
-                            {m.provider === "mock" ? (
-                              <MockBadge what="composed, not written by a model" />
-                            ) : null}
-                          </span>
-                        }
-                        hint={`${m.subject ? `Subject: ${m.subject} · ` : ""}${m.body.length} characters · created ${formatDateTime(m.createdAt)}`}
-                        actions={
-                          <MessageActions
-                            messageId={m.id}
-                            status={m.status}
-                            canTransmit={canTransmit}
-                            transmitReason={
-                              channelHealth?.manualOnly
-                                ? channelHealth.setupHint
-                                : (channelHealth?.detail ??
-                                  "This channel is not connected, so it must be sent by hand.")
-                            }
-                          />
-                        }
-                      />
-                      <pre
-                        id={`msg-${m.id}`}
-                        className="px-4 py-3 whitespace-pre-wrap font-sans text-[12.5px] text-ink-2 leading-relaxed"
-                      >
-                        {m.body}
-                      </pre>
-                      <div className="px-4 pb-3 flex flex-wrap gap-1.5">
-                        {fromJson<string[]>(m.observationsJson, []).map((o) => (
-                          <Badge
-                            key={o}
-                            tone="neutral"
-                            title="This message was grounded in this observation"
-                          >
-                            {o.length > 70 ? `${o.slice(0, 67)}…` : o}
-                          </Badge>
-                        ))}
-                      </div>
-                      {m.events.length ? (
-                        <ul className="px-4 pb-3 text-[11.5px] text-ink-4">
-                          {m.events.map((e) => (
-                            <li key={e.id}>
-                              {formatDateTime(e.at)} — {e.type}
-                              {e.detail ? `: ${e.detail}` : ""}
-                            </li>
-                          ))}
-                        </ul>
-                      ) : null}
-                    </Panel>
-                  );
-                })
-              )}
-            </div>
-          </>
+          <OutreachCenter rows={queue.rows} counts={queue.counts} />
         ) : null}
 
-        {/* ---------------------------------------------------------- voice */}
         {tab === "voice" ? <VoiceStudio voices={voiceViews} /> : null}
 
         {/* ------------------------------------------------------- channels */}

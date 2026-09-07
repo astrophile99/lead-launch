@@ -35,6 +35,10 @@ import {
   DigitalPresenceGrid,
 } from "@/components/features/DigitalPresence";
 import { SequenceButton } from "@/components/features/OutreachActions";
+import { ResearchPanel } from "@/components/features/ResearchPanel";
+import { ConversationTimeline } from "@/components/features/ConversationTimeline";
+import { getResearch } from "@/services/research";
+import { prospectTimeline } from "@/services/outreach-queue";
 import {
   DraftOutreachControls,
   NoteComposer,
@@ -48,12 +52,14 @@ export const dynamic = "force-dynamic";
 
 const TABS = [
   { id: "overview", label: "Overview" },
+  { id: "research", label: "Research" },
   { id: "presence", label: "Digital Presence" },
   { id: "audit", label: "Website Audit" },
   { id: "opportunity", label: "Opportunity" },
   { id: "competitors", label: "Competitors" },
   { id: "concept", label: "Website Concept" },
   { id: "outreach", label: "Outreach" },
+  { id: "timeline", label: "Conversation" },
   { id: "activity", label: "Activity" },
   { id: "notes", label: "Notes" },
 ];
@@ -83,10 +89,12 @@ export default async function ProspectPage({
   });
   if (!prospect) notFound();
 
-  const [audit, opportunity, allTags] = await Promise.all([
+  const [audit, opportunity, allTags, research, timeline] = await Promise.all([
     latestAudit(prospect.id),
     latestOpportunity(prospect.id),
     prisma.tag.findMany({ where: { workspaceId }, orderBy: { name: "asc" } }),
+    getResearch(workspaceId, prospect.businessId),
+    prospectTimeline(workspaceId, prospect.id),
   ]);
 
   const b = prospect.business;
@@ -100,7 +108,9 @@ export default async function ProspectPage({
   const tabsWithCounts = TABS.map((t) => ({
     ...t,
     count:
-      t.id === "audit" ? audit?.findings.length ?? 0
+      t.id === "research" ? research.length
+      : t.id === "timeline" ? timeline.length
+      : t.id === "audit" ? audit?.findings.length ?? 0
       : t.id === "outreach" ? prospect.messages.length
       : t.id === "notes" ? prospect.notes.length
       : t.id === "activity" ? prospect.activities.length
@@ -148,6 +158,7 @@ export default async function ProspectPage({
             hasOpportunityAnalysis={Boolean(salesAngle)}
             projectId={project?.id ?? null}
             hasWebsite={Boolean(b.website)}
+            hasVersions={(project?.versions.length ?? 0) > 0}
           />
         }
       />
@@ -296,6 +307,15 @@ export default async function ProspectPage({
         ) : null}
 
         {/* ------------------------------------------------------------- presence */}
+        {/* ------------------------------------------------------------- research */}
+        {tab === "research" ? (
+          <ResearchPanel
+            prospectId={prospect.id}
+            hasWebsite={Boolean(b.website)}
+            records={research as never}
+          />
+        ) : null}
+
         {tab === "presence" ? (
           <div className="flex flex-col gap-5">
             <DigitalPresenceGrid
@@ -664,6 +684,21 @@ export default async function ProspectPage({
               ))
             )}
           </div>
+        ) : null}
+
+        {/* ---------------------------------------------------------- timeline */}
+        {tab === "timeline" ? (
+          <ConversationTimeline
+            rows={timeline}
+            nextAction={
+              prospect.tasks[0]
+                ? {
+                    title: prospect.tasks[0].title,
+                    dueAt: prospect.tasks[0].dueAt?.toISOString() ?? null,
+                  }
+                : null
+            }
+          />
         ) : null}
 
         {/* ------------------------------------------------------------ activity */}

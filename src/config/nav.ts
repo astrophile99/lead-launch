@@ -111,14 +111,14 @@ export const NAV_GROUPS: { id: NavItem["group"]; label: string }[] = [
  * The mobile bottom bar. Four destinations plus More: any more than that and
  * the targets stop being comfortably tappable on a 375px screen.
  */
-export const MOBILE_PRIMARY: string[] = ["/", "/prospects", "/studio", "/pipeline"];
+export const MOBILE_PRIMARY: string[] = ["/", "/prospects", "/outreach", "/studio"];
 
 /** Everything reachable only from the mobile "More" sheet. */
 export const MOBILE_MORE: string[] = [
   "/discover",
   "/audit",
   "/radar",
-  "/outreach",
+  "/pipeline",
   "/analytics",
   "/ai",
   "/settings",

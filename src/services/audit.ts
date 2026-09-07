@@ -1,4 +1,5 @@
 import { prisma } from "@/db/client";
+import { normaliseStage } from "@/config/pipeline";
 import { AppError, toAppError } from "@/lib/errors";
 import { fromJson, toJson } from "@/lib/json";
 import { startJob } from "@/lib/logger";
@@ -171,8 +172,15 @@ function toFindingRow(f: FindingInput) {
   };
 }
 
+/**
+ * A completed audit moves a brand-new prospect to Researched, and nothing else.
+ *
+ * It never advances a prospect who is already in a sales conversation - an
+ * audit is something we did, not something they did, and letting it rewind
+ * someone from "Meeting scheduled" back down the funnel would be nonsense.
+ */
 function advanceStage(current: string): string {
-  return current === "discovered" || current === "qualified" ? "audited" : current;
+  return normaliseStage(current) === "new" ? "researched" : current;
 }
 
 /** Latest completed audit for a prospect, with signals decoded. */

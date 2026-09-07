@@ -210,7 +210,11 @@ export async function draftOutreach(
       // will actually be used, rather than re-resolving it at send.
       recipient: identifierFor(channel, prospect.business),
       transport: (await resolveTransport(workspaceId, channel)).id,
-      generatedByAI: !outcome.isMock,
+      // True for anything the machine wrote, including the deterministic
+      // composer. It flips to false only when a person edits the words, which
+      // is what the "edited by you" badge in the queue actually means. Whether
+      // a *model* was involved is a different question, answered by `provider`.
+      generatedByAI: true,
       costUsd: outcome.costUsd,
     },
   });
