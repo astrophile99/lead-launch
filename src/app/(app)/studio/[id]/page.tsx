@@ -100,6 +100,7 @@ export default async function StudioProjectPage({
     { id: "brief", label: "Brief" },
     { id: "quality", label: "Quality gate", count: report?.checks.length },
     { id: "versions", label: "Versions", count: project.versions.length },
+    { id: "readme", label: "README" },
     { id: "builds", label: "Build log", count: project.builds.length },
     { id: "deploy", label: "Deployment", count: project.deployments.length },
     { id: "handoff", label: "Handoff" },
@@ -284,6 +285,35 @@ export default async function StudioProjectPage({
           </div>
         ) : null}
 
+        {tab === "readme" ? (
+          <Panel>
+            <PanelHeader
+              title={latest ? `README for v${latest.version}` : "README"}
+              hint="Written at build time and shipped inside the archive. It names the model, lists what the quality gate could not check, and marks every fact the generator was not given."
+              actions={
+                latest ? (
+                  <a
+                    href={`/api/versions/${latest.id}/download`}
+                    className="inline-flex items-center h-7 px-2.5 rounded-sm border border-line-strong bg-surface-2 text-[12px] font-medium text-ink hover:bg-surface-3 transition-colors"
+                  >
+                    Download ZIP
+                  </a>
+                ) : null
+              }
+            />
+            {latest?.readmeText ? (
+              <pre className="px-4 py-3.5 text-[12px] leading-relaxed text-ink-2 whitespace-pre-wrap font-mono overflow-x-auto">
+                {latest.readmeText}
+              </pre>
+            ) : (
+              <EmptyState
+                title="No README yet"
+                body="One is generated with every build. Versions built before artifact storage do not have one."
+              />
+            )}
+          </Panel>
+        ) : null}
+
         {tab === "builds" ? (
           <div className="flex flex-col gap-3">
             {project.builds.length === 0 ? (
@@ -329,8 +359,21 @@ export default async function StudioProjectPage({
 
         {tab === "deploy" ? (
           <div className="flex flex-col gap-5">
+            <InfoNote tone="warn">
+              <strong className="font-semibold">
+                Deployment is deliberately outside this workflow.
+              </strong>{" "}
+              A build ends at a reviewed, downloadable project — nothing here has been pushed to a
+              repository or published anywhere. Deploy by hand once you have read the site, or use
+              the adapter below if you would rather this app did it. Either way it is an explicit
+              action you take, never a step a build performs.
+            </InfoNote>
+
             <Panel>
-              <PanelHeader title="Deploy" hint="Nothing is reported as deployed unless the provider confirmed it." />
+              <PanelHeader
+                title="Deploy"
+                hint="Nothing is reported as deployed unless the provider confirmed it with a URL."
+              />
               <DeployControls
                 projectId={project.id}
                 configured={deployment.isConfigured()}
