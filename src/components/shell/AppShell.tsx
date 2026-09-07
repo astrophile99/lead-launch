@@ -58,7 +58,13 @@ export function AppShell({
           }
         />
 
-        <main className="flex-1 overflow-y-auto">
+        {/*
+          `min-w-0` is load-bearing. As a flex item, main defaults to
+          min-width:auto and grows to fit its widest descendant — which for the
+          Kanban board is twelve 256px columns. The board scrolls inside its own
+          container; without this, it scrolled the whole document instead.
+        */}
+        <main className="flex-1 min-w-0 overflow-y-auto">
           {/* The bottom padding clears the mobile tab bar. */}
           <div className="mx-auto w-full max-w-[104rem] px-3 sm:px-5 lg:px-6 py-4 sm:py-5 pb-24 lg:pb-8">
             {children}

@@ -8,7 +8,15 @@ import { evaluateBudget, getSpendSummary } from "@/services/costs";
 import { getSetupSteps } from "@/services/integrations";
 import { listJobs } from "@/services/jobs";
 import { getSettings } from "@/services/settings";
+import { getCommandCenter } from "@/services/command-center";
 import { JobList } from "@/components/features/JobList";
+import {
+  Attention,
+  BuildQueue,
+  PipelinePulseBar,
+  PulseStrip,
+  TodayGrid,
+} from "@/components/features/CommandCenter";
 import { SetupChecklist } from "@/components/features/SetupChecklist";
 import {
   Badge,
@@ -20,7 +28,6 @@ import {
   PanelHeader,
   PageHeader,
   ScoreBadge,
-  StatTile,
   StatusDot,
 } from "@/components/ui/primitives";
 
@@ -40,8 +47,17 @@ const FEED_GLYPH: Record<string, string> = {
 export default async function OverviewPage() {
   const { workspaceId } = await getWorkspaceContext();
 
-  const [overview, feed, jobs, openTasks, topProspects, setupSteps, spend, settings] =
-    await Promise.all([
+  const [
+    overview,
+    feed,
+    jobs,
+    openTasks,
+    topProspects,
+    setupSteps,
+    spend,
+    settings,
+    center,
+  ] = await Promise.all([
       getOverview(workspaceId),
       getOpportunityFeed(workspaceId),
       listJobs(workspaceId, { limit: 8 }),
@@ -66,18 +82,18 @@ export default async function OverviewPage() {
       getSetupSteps(workspaceId),
       getSpendSummary(workspaceId),
       getSettings(workspaceId),
+      getCommandCenter(workspaceId),
     ]);
 
   const visibleSteps = setupSteps.filter((s) => !settings.dismissedSetupSteps.includes(s.id));
   const showChecklist = visibleSteps.some((s) => !s.done);
   const budget = evaluateBudget(spend.month.costUsd, settings.monthlyBudgetUsd);
-  const replyRate = overview.outreachSent > 0 ? overview.replies / overview.outreachSent : null;
 
   return (
     <>
       <PageHeader
-        title="Overview"
-        description="Every figure below is counted from stored rows. Nothing here is estimated."
+        title="Today"
+        description="What needs you, and what is quietly going wrong. Every figure is a count of stored rows — nothing here is estimated, and nothing on this page starts work on its own."
         meta={
           <>
             {appConfig.mode === "demo" ? (
@@ -109,60 +125,58 @@ export default async function OverviewPage() {
 
       {showChecklist ? <SetupChecklist steps={visibleSteps} /> : null}
 
-      <div className="grid gap-2.5 grid-cols-2 md:grid-cols-4 xl:grid-cols-8">
-        <StatTile
-          label="Prospects"
-          value={formatNumber(overview.totalProspects)}
-          sub={`${overview.newThisWeek} this week`}
-          href="/prospects"
-        />
-        <StatTile
-          label="High opportunity"
-          value={formatNumber(overview.highOpportunity)}
-          sub="Scoring 70+"
-          tone="ok"
-          href="/radar"
-        />
-        <StatTile
-          label="Audited"
-          value={formatNumber(overview.websitesAudited)}
-          sub={overview.auditsFailed ? `${overview.auditsFailed} failed` : "No failures"}
-          tone={overview.auditsFailed ? "warn" : undefined}
-          href="/audit"
-        />
-        <StatTile
-          label="Sites built"
-          value={formatNumber(overview.websitesGenerated)}
-          sub={`${overview.websitesDeployed} deployed`}
-          href="/studio"
-        />
-        <StatTile
-          label="Outreach"
-          value={formatNumber(overview.outreachSent)}
-          sub={`${overview.outreachDrafted} drafted`}
-          href="/outreach"
-        />
-        <StatTile
-          label="Replies"
-          value={formatNumber(overview.replies)}
-          sub={replyRate == null ? "Nothing sent yet" : `${Math.round(replyRate * 100)}% of sent`}
-        />
-        <StatTile
-          label="Meetings"
-          value={formatNumber(overview.meetings)}
-          sub={`${overview.won} won`}
-          href="/pipeline"
-        />
-        <StatTile
-          label="Pipeline"
-          value={formatCurrency(overview.pipelineValue)}
-          sub={overview.won ? `${formatCurrency(overview.wonValue)} won` : "Open value"}
-          href="/analytics"
+      <div className="mb-4">
+        <PulseStrip
+          workspaceName={overview.totalProspects > 0 ? `${formatNumber(overview.totalProspects)} prospects` : "No prospects yet"}
+          mode={appConfig.mode}
+          monthUsd={spend.month.costUsd}
+          budgetUsd={settings.monthlyBudgetUsd}
+          jobsToday={spend.today.jobs}
         />
       </div>
 
+      <TodayGrid counts={center.today} />
+
       <div className="mt-5 grid gap-5 lg:grid-cols-[1.15fr_0.85fr]">
-        <div className="flex flex-col gap-5">
+        <div className="flex flex-col gap-5 min-w-0">
+          <Attention items={center.attention} />
+          <PipelinePulseBar pulse={center.pulse} />
+          <BuildQueue items={center.buildQueue} />
+        </div>
+        <div className="flex flex-col gap-5 min-w-0">
+          <Panel>
+            <PanelHeader
+              title="Where the money goes"
+              hint="Counted from real provider responses. Money only where a price is configured."
+              actions={
+                <Link href="/ai?tab=cost" className="text-[11.5px] text-accent hover:underline underline-offset-2">
+                  Cost dashboard &rarr;
+                </Link>
+              }
+            />
+            <dl className="px-4 py-3 grid grid-cols-2 gap-y-2 text-[12.5px]">
+              <dt className="text-ink-3">Today</dt>
+              <dd className="tabular text-right text-ink-2">
+                {spend.today.costUsd == null ? "not priced" : formatCurrency(spend.today.costUsd, "USD")}
+              </dd>
+              <dt className="text-ink-3">This month</dt>
+              <dd className="tabular text-right text-ink-2">
+                {spend.month.costUsd == null ? "not priced" : formatCurrency(spend.month.costUsd, "USD")}
+              </dd>
+              <dt className="text-ink-3">Jobs this month</dt>
+              <dd className="tabular text-right text-ink-2">{spend.month.jobs}</dd>
+            </dl>
+            {budget.status === "unknown" ? (
+              <p className="px-4 pb-3 text-[11.5px] text-ink-4 leading-snug">
+                {budget.message} An unmeasurable budget never blocks work.
+              </p>
+            ) : null}
+          </Panel>
+        </div>
+      </div>
+
+      <div className="mt-5 grid gap-5 lg:grid-cols-[1.15fr_0.85fr]">
+        <div className="flex flex-col gap-5 min-w-0">
           <Panel>
             <PanelHeader
               title="Opportunity feed"
@@ -253,7 +267,7 @@ export default async function OverviewPage() {
           </Panel>
         </div>
 
-        <div className="flex flex-col gap-5">
+        <div className="flex flex-col gap-5 min-w-0">
           <Panel>
             <PanelHeader
               title="Next actions"

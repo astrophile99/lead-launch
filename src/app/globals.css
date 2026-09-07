@@ -185,6 +185,21 @@ body {
 }
 
 /* Numeric columns must align, or a table of scores is unreadable. */
+
+/*
+ * Grid and flex items default to `min-width: auto`, which means a child with a
+ * long unbreakable run - a heading, a URL, a truncate that never gets the
+ * chance to truncate - widens its own track past the container. On a 1440px
+ * screen nobody notices; at 375px it is horizontal overflow across the whole
+ * page.
+ *
+ * `:where()` keeps the specificity at zero, so any component that genuinely
+ * needs an intrinsic minimum can simply set one and win.
+ */
+main :where(.grid, .flex) > * {
+  min-width: 0;
+}
+
 .tabular {
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum" 1;
