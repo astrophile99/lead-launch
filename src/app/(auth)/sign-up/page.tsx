@@ -1,14 +1,9 @@
-import { appConfig, capabilities } from "@/config/app";
-import { AuthForm } from "@/components/features/AuthForms";
+import { redirect } from "next/navigation";
 
-export const metadata = { title: "Create account" };
+export const metadata = {
+  title: "Account access",
+};
 
 export default function Page() {
-  return (
-    <AuthForm
-      mode="sign-up"
-      authConfigured={capabilities.hasAuth}
-      googleEnabled={appConfig.auth.googleOAuthEnabled}
-    />
-  );
+  redirect("/sign-in?error=invite-only");
 }

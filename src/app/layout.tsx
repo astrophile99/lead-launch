@@ -1,9 +1,15 @@
 import type { Metadata, Viewport } from "next";
+import Script from "next/script";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { ToastProvider } from "@/components/ui/Toast";
 
-const sans = Inter({ variable: "--font-app-sans", subsets: ["latin"], display: "swap" });
+const sans = Inter({
+  variable: "--font-app-sans",
+  subsets: ["latin"],
+  display: "swap",
+});
+
 const mono = JetBrains_Mono({
   variable: "--font-app-mono",
   subsets: ["latin"],
@@ -24,27 +30,51 @@ export const viewport: Viewport = {
   initialScale: 1,
   viewportFit: "cover",
   themeColor: [
-    { media: "(prefers-color-scheme: dark)", color: "#0a0b0d" },
-    { media: "(prefers-color-scheme: light)", color: "#fafafb" },
+    {
+      media: "(prefers-color-scheme: dark)",
+      color: "#0a0b0d",
+    },
+    {
+      media: "(prefers-color-scheme: light)",
+      color: "#fafafb",
+    },
   ],
 };
 
 /**
- * The root layout owns only the document, fonts, theme and toasts. The
- * application chrome lives in the (app) route group so the authentication
- * screens can render without a sidebar wrapped around them.
+ * The root layout owns only the document, fonts, theme and toasts.
+ * Application chrome lives in the (app) route group so authentication
+ * screens render without the application sidebar.
  */
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default function RootLayout({
+  children,
+}: LayoutProps<"/">) {
   return (
-    <html lang="en" className={`${sans.variable} ${mono.variable} h-full`} suppressHydrationWarning>
+    <html
+      lang="en"
+      className={`${sans.variable} ${mono.variable} h-full`}
+      suppressHydrationWarning
+    >
       <head>
-        {/* Applied before paint so the theme never flashes. Dark is the default. */}
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `try{var t=localStorage.getItem('ll:theme');if(t!=='light'&&t!=='dark'){t=matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'}document.documentElement.dataset.theme=t}catch(e){document.documentElement.dataset.theme='dark'}`,
-          }}
-        />
+        <Script id="lead-launch-theme" strategy="beforeInteractive">
+          {`
+            try {
+              var t = localStorage.getItem("ll:theme");
+
+              if (t !== "light" && t !== "dark") {
+                t = window.matchMedia("(prefers-color-scheme: light)").matches
+                  ? "light"
+                  : "dark";
+              }
+
+              document.documentElement.dataset.theme = t;
+            } catch (e) {
+              document.documentElement.dataset.theme = "dark";
+            }
+          `}
+        </Script>
       </head>
+
       <body className="h-full">
         <ToastProvider>{children}</ToastProvider>
       </body>

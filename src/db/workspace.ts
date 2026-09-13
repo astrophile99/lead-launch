@@ -1,51 +1,65 @@
 import { prisma } from "@/db/client";
-import { appConfig } from "@/config/app";
 import { AppError } from "@/lib/errors";
-
-/**
- * The authentication boundary.
- *
- * Real auth is not wired up yet, but every resource in the schema already hangs
- * off a Workspace and every query in the application goes through a context
- * obtained here. Replacing this function with a session lookup is the entire
- * change required to become multi-user - no query needs to be rewritten.
- */
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export type WorkspaceContext = {
   workspaceId: string;
   workspaceName: string;
-  userId: string | null;
-  userName: string | null;
+  userId: string;
+  userName: string;
   role: "owner" | "member" | "viewer";
 };
 
-let cached: WorkspaceContext | null = null;
-
+/**
+ * Resolve the Lead → Launch workspace from the authenticated Supabase user.
+ *
+ * Important:
+ * - We do NOT trust the workspace slug as the security boundary.
+ * - We do NOT take the first user in a workspace.
+ * - The Supabase auth identity must map to User.authUserId.
+ */
 export async function getWorkspaceContext(): Promise<WorkspaceContext> {
-  if (cached) return cached;
+  const supabase = await createSupabaseServerClient();
 
-  const workspace = await prisma.workspace.findUnique({
-    where: { slug: appConfig.defaultWorkspaceSlug },
-    include: { users: { take: 1, orderBy: { createdAt: "asc" } } },
-  });
+  const {
+    data: claimsData,
+    error: claimsError,
+  } = await supabase.auth.getClaims();
 
-  if (!workspace) {
+  const authUserId = claimsData?.claims?.sub;
+
+  if (claimsError || !authUserId) {
     throw new AppError({
-      kind: "not-found",
-      message: `No workspace with slug "${appConfig.defaultWorkspaceSlug}".`,
-      remedy: "Run `npm run db:seed` to create the default workspace and demo data.",
+      kind: "unauthorized",
+      message: "You must be signed in to access Lead → Launch.",
+      remedy: "Sign in and try again.",
     });
   }
 
-  const user = workspace.users[0] ?? null;
-  cached = {
-    workspaceId: workspace.id,
-    workspaceName: workspace.name,
-    userId: user?.id ?? null,
-    userName: user?.name ?? null,
-    role: (user?.role as WorkspaceContext["role"]) ?? "owner",
+  const user = await prisma.user.findUnique({
+    where: {
+      authUserId,
+    },
+    include: {
+      workspace: true,
+    },
+  });
+
+  if (!user) {
+    throw new AppError({
+      kind: "forbidden",
+      message: "Your account is not connected to a Lead → Launch workspace.",
+      remedy: "Ask the workspace owner to activate your account.",
+    });
+  }
+
+  return {
+    workspaceId: user.workspaceId,
+    workspaceName: user.workspace.name,
+    userId: user.id,
+    userName: user.name,
+    role: user.role as WorkspaceContext["role"],
   };
-  return cached;
 }
 
 /** Throws unless the context may mutate data. */
@@ -59,7 +73,12 @@ export function assertCanWrite(ctx: WorkspaceContext): void {
   }
 }
 
-/** Test hook - clears the memoised context. */
+/**
+ * Kept for compatibility with existing callers/tests.
+ *
+ * Workspace context is now resolved per authenticated request,
+ * so there is intentionally no global workspace cache.
+ */
 export function resetWorkspaceCache(): void {
-  cached = null;
+  // No-op.
 }

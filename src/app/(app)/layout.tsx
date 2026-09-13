@@ -6,6 +6,8 @@ import { getSpendSummary } from "@/services/costs";
 import { getSettings } from "@/services/settings";
 import { AppShell } from "@/components/shell/AppShell";
 import type { NotificationRow } from "@/components/shell/Topbar";
+import { redirect } from "next/navigation";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 /** Chrome data, derived per request from real rows for the current workspace. */
 async function chromeData() {
@@ -64,19 +66,38 @@ async function chromeData() {
   }
 }
 
-export default async function AppLayout({ children }: { children: ReactNode }) {
+export default async function AppLayout({
+  children,
+}: {
+  children: ReactNode;
+}) {
+  // Check Supabase authentication BEFORE loading any dashboard data.
+  const supabase = await createSupabaseServerClient();
+
+const { data: claimsData, error: claimsError } =
+  await supabase.auth.getClaims();
+
+if (claimsError || !claimsData?.claims) {
+  redirect("/sign-in");
+}
+
+  // Only authenticated users reach this point.
   const data = await chromeData();
 
   if (!data.ok) {
     return (
       <div className="h-full grid place-items-center px-6">
         <div className="max-w-md text-center">
-          <h1 className="text-[18px] font-semibold mb-2">Database not initialised</h1>
+          <h1 className="text-[18px] font-semibold mb-2">
+            Database not initialised
+          </h1>
+
           <p className="text-[13px] text-ink-2 leading-relaxed">
             No workspace was found. Run the migration and seed once, then reload:
           </p>
+
           <pre className="mt-3 text-left text-[12px] bg-surface-2 border border-line rounded-md p-3 overflow-x-auto">
-            npm run db:migrate{"\n"}npm run db:seed
+            {"npm run db:migrate\nnpm run db:seed"}
           </pre>
         </div>
       </div>
