@@ -21,16 +21,14 @@ export type WorkspaceContext = {
 export async function getWorkspaceContext(): Promise<WorkspaceContext> {
   const supabase = await createSupabaseServerClient();
 
-  const {
-    data: claimsData,
-    error: claimsError,
-  } = await supabase.auth.getClaims();
+  const { data: claimsData, error: claimsError } =
+    await supabase.auth.getClaims();
 
-  const authUserId = claimsData?.claims?.sub;
+  const authUserId = claimsError ? null : claimsData?.claims?.sub;
 
-  if (claimsError || !authUserId) {
+  if (!authUserId) {
     throw new AppError({
-      kind: "unauthorized",
+      kind: "forbidden",
       message: "You must be signed in to access Lead → Launch.",
       remedy: "Sign in and try again.",
     });
@@ -48,7 +46,8 @@ export async function getWorkspaceContext(): Promise<WorkspaceContext> {
   if (!user) {
     throw new AppError({
       kind: "forbidden",
-      message: "Your account is not connected to a Lead → Launch workspace.",
+      message:
+        "Your account is not connected to a Lead → Launch workspace.",
       remedy: "Ask the workspace owner to activate your account.",
     });
   }

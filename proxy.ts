@@ -11,7 +11,7 @@ const PUBLIC_PATHS = [
 
 function isPublicPath(pathname: string) {
   return PUBLIC_PATHS.some(
-    (path) => pathname === path || pathname.startsWith(`${path}/`),
+    (path) => pathname === path || pathname.startsWith(`${path}/`)
   );
 }
 
@@ -38,7 +38,6 @@ export async function proxy(request: NextRequest) {
       setAll(cookiesToSet) {
         cookiesToSet.forEach(({ name, value, options }) => {
           request.cookies.set(name, value);
-
           response.cookies.set(name, value, options);
         });
       },
@@ -50,10 +49,9 @@ export async function proxy(request: NextRequest) {
    * Use getClaims() for authorization decisions.
    * Do not rely on getSession() in server-side protection.
    */
-  const {
-    data: { claims },
-  } = await supabase.auth.getClaims();
+  const { data, error } = await supabase.auth.getClaims();
 
+  const claims = error ? null : data?.claims;
   const userExists = Boolean(claims);
   const isPublic = isPublicPath(request.nextUrl.pathname);
 
@@ -65,12 +63,11 @@ export async function proxy(request: NextRequest) {
     const signInUrl = request.nextUrl.clone();
 
     signInUrl.pathname = "/sign-in";
-
     signInUrl.search = "";
 
     signInUrl.searchParams.set(
       "redirectTo",
-      request.nextUrl.pathname,
+      request.nextUrl.pathname
     );
 
     return NextResponse.redirect(signInUrl);
@@ -87,9 +84,7 @@ export async function proxy(request: NextRequest) {
     isPublic &&
     !request.nextUrl.pathname.startsWith("/auth/callback")
   ) {
-    return NextResponse.redirect(
-      new URL("/", request.url),
-    );
+    return NextResponse.redirect(new URL("/", request.url));
   }
 
   return response;
