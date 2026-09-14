@@ -47,6 +47,7 @@ import {
   StageSelect,
   TagPicker,
 } from "@/components/features/ProspectActions";
+import { findBusinessDataProvider } from "@/providers/business-data";
 
 export const dynamic = "force-dynamic";
 
@@ -63,6 +64,12 @@ const TABS = [
   { id: "activity", label: "Activity" },
   { id: "notes", label: "Notes" },
 ];
+
+/** Appends the source licence's required credit line, where it has one. */
+function sourceAttribution(source: string): string {
+  const credit = findBusinessDataProvider(source)?.attribution;
+  return credit ? ` — ${credit}` : "";
+}
 
 export default async function ProspectPage({
   params,
@@ -224,7 +231,14 @@ export default async function ProspectPage({
                     ["Email", b.email],
                     ["Website", b.website],
                     ["Coordinates", b.lat && b.lng ? `${b.lat}, ${b.lng}` : null],
-                    ["Discovered", `${formatDateTime(b.discoveredAt)} via ${b.source}`],
+                    [
+                      "Discovered",
+                      // ODbL requires the credit wherever the data is shown,
+                      // and this page shows one business's OSM record in full.
+                      `${formatDateTime(b.discoveredAt)} via ${b.source}${
+                        b.isMock ? "" : sourceAttribution(b.source)
+                      }`,
+                    ],
                     ["Campaign", prospect.campaign?.name ?? null],
                   ].map(([k, v]) => (
                     <div key={k as string} className="flex gap-4 py-1.5 border-b border-line last:border-0">

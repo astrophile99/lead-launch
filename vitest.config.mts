@@ -8,6 +8,8 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["tests/**/*.test.ts"],
+    // Must run before any test module is imported; see the file for why.
+    setupFiles: ["tests/setup.env.ts"],
     // The integration test drives real service code against a temporary SQLite
     // file and runs a migration first, so give it room.
     testTimeout: 180_000,

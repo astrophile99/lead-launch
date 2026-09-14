@@ -152,6 +152,41 @@ Research is the recurring expense, so:
   you add a fetch path, use `crawlSite` or at minimum `assertSafePublicUrl` plus
   a byte cap — and re-validate on every redirect hop, not only the first URL.
 
+### Overpass
+
+Public Overpass instances fail often enough that a single request to a single
+host is not a working design. `overpass-api.de` is a DNS round-robin over two
+FOSSGIS machines, and an unhealthy one answers *every* query — including a
+three-node bounding box — with `504 Dispatcher_Client::...::timeout`. Measured
+within the same minute: `lambert` 200 in 1.7s, `gall` 504 in 6.1s.
+
+`overpass-client.ts` therefore retries, backs off, and fails over across the
+endpoint list, and `openstreetmap.ts` runs a ladder of progressively more
+tolerant queries on top of it. When touching either:
+
+- **Retry a host only when it answered.** A timeout usually means queueing, not
+  failure: Overpass grants two concurrent slots and *holds* further requests
+  until one frees, so an over-limit client sees a timeout rather than a 429.
+  Retrying that host takes another slot and lengthens the queue. A 5xx is a
+  real answer, and retrying it re-rolls the round-robin, which is the point.
+- **Share the budget across the endpoints still to be tried.** A primary that
+  blackholes connections must not spend the whole deadline; it did, once, and
+  two healthy servers went untried.
+- **Never let a limit silently disable a feature.** A hardcoded 8s escalation
+  reserve and a 4s attempt floor each, at one point, turned off the thing they
+  were guarding when the configured budget went below them. Reserves are
+  fractions of the budget, and the first attempt always runs.
+- **Ask the query to prove the place resolved.** `.searchArea out ids;` emits
+  the administrative area alongside the businesses, because Overpass builds its
+  area index separately from the main database: a server mid-rebuild answers
+  200 with zero elements while its sibling serves the same query normally.
+  Without the area in the output, that is indistinguishable from "this city has
+  no dentists" — a wrong answer, which is worse than an error. Zero areas
+  deprioritises that endpoint rather than ending the search.
+- **Use worldwide instances only.** The regional servers (Switzerland, Britain
+  and Ireland, Virginia, Ethiopia) answer 200 with zero results for anywhere
+  outside their region, which reads as an empty result rather than a failure.
+
 ## Security boundaries
 
 - **Authorization** goes through `src/lib/authz.ts`. Never write

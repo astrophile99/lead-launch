@@ -78,6 +78,32 @@ type Estimate = {
  * The point of the last step is the estimate: discovery and analysis cost money
  * and time, and the user should see the shape of that before committing.
  */
+/**
+ * Turns an error kind into the headline the reader needs.
+ *
+ * Discovery failures divide into "wait", "this network cannot reach it" and
+ * "something is misconfigured", and those call for different reactions. The
+ * message underneath carries the detail; this is the one line that has to be
+ * right.
+ */
+function failureTitle(kind: string, providerId: string): string {
+  const source = providerId === "openstreetmap" ? "OpenStreetMap" : "The discovery provider";
+  switch (kind) {
+    case "rate-limited":
+      return `${source} asked us to slow down`;
+    case "timeout":
+      return `${source} did not respond`;
+    case "unreachable":
+      return "Discovery provider unavailable";
+    case "not-configured":
+      return "Discovery provider is not configured";
+    case "invalid-input":
+      return "Check the campaign settings";
+    default:
+      return "The campaign could not run";
+  }
+}
+
 export function CampaignWizard({
   providers,
   analysisRoute,
@@ -95,7 +121,9 @@ export function CampaignWizard({
     providers.find((p) => !p.isMock && p.configured)?.id ?? providers[0]?.id ?? "mock",
   );
   const [estimate, setEstimate] = useState<Estimate | null>(null);
-  const [error, setError] = useState<{ message: string; remedy: string } | null>(null);
+  const [error, setError] = useState<{ title: string; message: string; remedy: string } | null>(
+    null,
+  );
   const [result, setResult] = useState<{
     discovered: number;
     duplicates: number;
@@ -140,8 +168,15 @@ export function CampaignWizard({
       });
 
       if (!res.ok) {
-        setError({ message: res.error.message, remedy: res.error.remedy });
-        toast.error("The campaign could not run", res.error.message);
+        // One message, not two. The inline panel below sits next to the Launch
+        // button, carries the remedy as well as the message, and stays put
+        // while the user reads it - so raising a toast saying roughly the same
+        // thing in fewer words only added noise.
+        setError({
+          title: failureTitle(res.error.kind, providerId),
+          message: res.error.message,
+          remedy: res.error.remedy,
+        });
         return;
       }
 
@@ -540,7 +575,7 @@ export function CampaignWizard({
 
             {error ? (
               <ErrorState
-                title="The campaign could not run"
+                title={error.title}
                 message={error.message}
                 remedy={error.remedy}
               />

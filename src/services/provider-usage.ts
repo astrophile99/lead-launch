@@ -18,7 +18,11 @@ import { prisma } from "@/db/client";
 /** USD per request, where the provider publishes a simple per-call price. */
 const UNIT_PRICE: Record<string, number | null> = {
   "google-places": null,
-  overpass: 0, // Free, open data. Zero is a fact here, not a guess.
+  // Keyed by provider id, which is what recordUsage is called with. "overpass"
+  // is kept as an alias so rows written before the ids were reconciled still
+  // price and label correctly rather than reading as an unknown provider.
+  openstreetmap: 0, // Free, open data. Zero is a fact here, not a guess.
+  overpass: 0,
   crawl: 0, // Our own bandwidth.
   pagespeed: 0, // Free tier; a key only raises the quota.
   gmail: 0,
@@ -78,6 +82,7 @@ export type UsageRow = {
 
 const LABELS: Record<string, string> = {
   "google-places": "Google Places",
+  openstreetmap: "OpenStreetMap (Overpass)",
   overpass: "OpenStreetMap (Overpass)",
   crawl: "Direct website crawl",
   pagespeed: "PageSpeed Insights",
@@ -88,6 +93,8 @@ const LABELS: Record<string, string> = {
 const NOTES: Record<string, string> = {
   "google-places":
     "Billed per request past the free allowance. Cached results and the free layers below it exist to keep this number low.",
+  openstreetmap:
+    "Free and open. Rate-limited by the operators rather than priced, so the app throttles rather than pays.",
   overpass:
     "Free and open. Rate-limited by the operators rather than priced, so the app throttles rather than pays.",
   crawl: "Our own bandwidth only. The cheapest and most accurate source of what a business offers.",

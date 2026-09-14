@@ -19,6 +19,7 @@ import {
   Th,
 } from "@/components/ui/primitives";
 import { RerunCampaign } from "@/components/features/RerunCampaign";
+import { findBusinessDataProvider } from "@/providers/business-data";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +39,14 @@ export default async function CampaignPage({ params }: PageProps<"/discover/[id]
   if (!campaign) notFound();
 
   const error = fromJson<{ message: string; remedy: string } | null>(campaign.error, null);
+
+  // ODbL makes attribution a condition of use, not a courtesy, and the
+  // obligation attaches to showing the data rather than to fetching it - so it
+  // is resolved from the provider that produced the campaign rather than from
+  // the response, which is long gone by the time anyone reads this page.
+  const attribution = campaign.isMock
+    ? null
+    : (findBusinessDataProvider(campaign.provider)?.attribution ?? null);
 
   return (
     <>
@@ -127,6 +136,11 @@ export default async function CampaignPage({ params }: PageProps<"/discover/[id]
             </tbody>
           </Table>
         )}
+        {attribution && campaign.prospects.length > 0 ? (
+          <p className="px-4 py-2.5 border-t border-line text-[11.5px] text-ink-3">
+            {attribution}
+          </p>
+        ) : null}
       </Panel>
     </>
   );

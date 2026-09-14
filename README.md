@@ -119,7 +119,23 @@ and nothing is fetched twice without being asked:
    accurate source of what a business actually sells.
 2. **OpenStreetMap via Overpass.** Free, open, no key. The default discovery
    provider. It carries no ratings or review counts, and says so rather than
-   reporting zeros. ODbL attribution is carried on every result.
+   reporting zeros. ODbL attribution is carried on every result and rendered
+   wherever the data is shown.
+
+   Public Overpass instances are unreliable in a specific, measurable way, so
+   this path is built for it. `overpass-api.de` load-balances over two FOSSGIS
+   machines and an unhealthy one answers every query with `504`, so a single
+   request to a single host fails roughly half the time regardless of what you
+   asked for. Discovery therefore retries, backs off, and fails over across a
+   list of worldwide endpoints, sharing one wall-clock budget so it can never
+   outlive the request waiting on it. Set `OVERPASS_API_URLS` to take over that
+   list completely — a single URL there pins discovery to one instance.
+
+   The query asks for the resolved administrative area as well as the
+   businesses inside it. That is what separates "this city has no dentists"
+   from "this server could not resolve this city", which Overpass otherwise
+   reports identically as zero results — and the second, reported as the first,
+   is a wrong answer rather than a thin one.
 3. **Google Places.** Billed per request past the free allowance, so it is the
    fallback rather than the default, and every call is counted. Settings →
    Research shows how much of the monthly allowance is left.

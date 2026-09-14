@@ -13,6 +13,14 @@ export interface BusinessDataProvider {
   readonly id: string;
   readonly label: string;
   readonly isMock: boolean;
+  /**
+   * Credit line the source licence requires wherever its data is shown.
+   *
+   * On the provider rather than only on `DiscoveryResult` because the campaign
+   * page renders records fetched days ago: the obligation outlives the request
+   * that produced them. Undefined means the source imposes no such condition.
+   */
+  readonly attribution?: string;
   /** False when the credential is missing; the registry will skip it. */
   isConfigured(): boolean;
   health(): ProviderHealth;

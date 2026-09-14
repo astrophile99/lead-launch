@@ -607,11 +607,47 @@ describe("secret handling", () => {
     }
   });
 
+  /**
+   * The two Supabase client factories are a real exception, not an oversight.
+   *
+   * Next.js inlines `process.env.NEXT_PUBLIC_*` into the browser bundle only
+   * where it appears as a literal. `appConfig` reads through `process.env[key]`
+   * - a dynamic lookup the bundler cannot substitute - so routing the browser
+   * client through it would hand `createBrowserClient` two `undefined` values
+   * and break sign-in. The literal has to stay in the file that needs it.
+   *
+   * The exception is bounded rather than granted: the first test allows those
+   * files, and the second asserts they read nothing but the two public
+   * Supabase values, so the hole cannot quietly widen to cover a secret.
+   */
+  const ENV_EXCEPTIONS = [
+    "src/lib/supabase/client.ts",
+    "src/lib/supabase/server.ts",
+    // Server-side, so this one could read appConfig and has no technical need
+    // for the literal. Listed because it reads the same two public values and
+    // is covered by the bound below; worth routing through appConfig the next
+    // time the auth callback is touched.
+    "src/app/(auth)/callback/route.ts",
+  ];
+
   it("reads process.env only in the config module", () => {
     const offenders = files
       .filter((f) => /process\.env/.test(fs.readFileSync(f, "utf8")))
-      .map((f) => path.relative(process.cwd(), f).replace(/\\/g, "/"));
+      .map((f) => path.relative(process.cwd(), f).replace(/\\/g, "/"))
+      .filter((f) => !ENV_EXCEPTIONS.includes(f));
     expect(offenders).toEqual(["src/config/app.ts"]);
+  });
+
+  it("lets the Supabase exception read nothing but its own public values", () => {
+    for (const rel of ENV_EXCEPTIONS) {
+      const source = fs.readFileSync(path.join(process.cwd(), rel), "utf8");
+      const read = [...source.matchAll(/process\.env\.([A-Z0-9_]+)/g)].map((m) => m[1]);
+      expect(read.length).toBeGreaterThan(0);
+      expect([...new Set(read)].sort()).toEqual([
+        "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+        "NEXT_PUBLIC_SUPABASE_URL",
+      ]);
+    }
   });
 
   it("no client component imports a service or the database", () => {

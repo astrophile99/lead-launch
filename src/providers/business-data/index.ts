@@ -28,6 +28,18 @@ export function listBusinessDataProviders(): BusinessDataProvider[] {
   return registry;
 }
 
+/**
+ * Exact lookup, with no fallback.
+ *
+ * Distinct from `getBusinessDataProvider`, which always returns *something*
+ * usable. That is right when choosing who to call and wrong when asking about
+ * a provider id already recorded on a stored row: falling back there would
+ * attribute old records to whichever provider happens to be configured today.
+ */
+export function findBusinessDataProvider(id: string): BusinessDataProvider | undefined {
+  return registry.find((p) => p.id === id);
+}
+
 export function businessDataHealth(): ProviderHealth[] {
   return registry.map((p) => p.health());
 }

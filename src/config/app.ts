@@ -23,11 +23,47 @@ function int(key: string, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+/** Comma-separated env value -> trimmed, de-duplicated, non-empty entries. */
+function list(key: string): string[] {
+  const v = env(key);
+  if (!v) return [];
+  const seen = new Set<string>();
+  for (const part of v.split(",")) {
+    const t = part.trim();
+    if (t) seen.add(t);
+  }
+  return [...seen];
+}
+
 function bool(key: string, fallback: boolean): boolean {
   const v = env(key)?.toLowerCase();
   if (v === undefined) return fallback;
   return v === "1" || v === "true" || v === "yes";
 }
+
+/** FOSSGIS's round-robin front door. Free, worldwide, no key. */
+const OVERPASS_DEFAULT = "https://overpass-api.de/api/interpreter";
+
+/**
+ * Tried in order after the primary, and only after it has been retried.
+ *
+ * The first two are the individual FOSSGIS machines that `overpass-api.de`
+ * round-robins between. Addressing them by name is what makes recovery
+ * deterministic rather than a coin flip: when one is unhealthy, retrying the
+ * round-robin hostname may keep landing on the broken half, whereas the named
+ * hosts reach the working one directly. They are listed in no meaningful
+ * order - which of the two is healthy changes over time, and the point is that
+ * both get tried.
+ *
+ * `private.coffee` is an independent worldwide instance documented on the OSM
+ * wiki, kept last so third-party infrastructure is only used once FOSSGIS's
+ * own has failed.
+ */
+const OVERPASS_FALLBACKS = [
+  "https://lambert.openstreetmap.de/api/interpreter",
+  "https://gall.openstreetmap.de/api/interpreter",
+  "https://overpass.private.coffee/api/interpreter",
+];
 
 export const appConfig = {
   mode: (env("APP_MODE") ?? "demo") as AppMode,
@@ -147,8 +183,69 @@ export const appConfig = {
     userAgent:
       env("RESEARCH_USER_AGENT") ??
       "LeadLaunchBot/1.0 (+https://github.com/astrophile99/lead-launch; local business research)",
-    /** Overpass endpoint for the free discovery layer. */
-    overpassUrl: env("OVERPASS_API_URL") ?? "https://overpass-api.de/api/interpreter",
+    /**
+     * Overpass endpoint for the free discovery layer.
+     *
+     * Kept as a single URL for backwards compatibility; `overpassUrls` below
+     * is what the provider actually reads.
+     */
+    overpassUrl: env("OVERPASS_API_URL") ?? OVERPASS_DEFAULT,
+    /**
+     * The endpoints the provider will try, in order.
+     *
+     * Why a list at all: `overpass-api.de` is a DNS round-robin over two
+     * FOSSGIS machines, and when one of them is unhealthy it answers *every*
+     * query - including a trivial one - with `504 Dispatcher_Client::
+     * request_read_and_idx::timeout`. A single-endpoint client with no retry
+     * therefore fails roughly half the time through no fault of the query.
+     *
+     * Resolution order:
+     *   - `OVERPASS_API_URLS` set  -> exactly that list, nothing appended.
+     *     This is the escape hatch for pinning to one instance: set it to a
+     *     single URL and no built-in fallback is ever contacted.
+     *   - otherwise                -> `OVERPASS_API_URL` (or the default)
+     *     first, then the built-in fallbacks.
+     *
+     * The built-ins are worldwide-coverage instances only. Regional servers
+     * (Switzerland, Britain and Ireland, Virginia, Ethiopia) are deliberately
+     * excluded: they answer 200 with zero elements for anywhere outside their
+     * region, which would read as "no businesses found" rather than as a
+     * failure - a wrong answer is worse than an error.
+     */
+    get overpassUrls(): string[] {
+      const explicit = list("OVERPASS_API_URLS");
+      if (explicit.length) return explicit;
+      const primary = env("OVERPASS_API_URL") ?? OVERPASS_DEFAULT;
+      return [primary, ...OVERPASS_FALLBACKS.filter((u) => u !== primary)];
+    },
+    // Getters, like overpassUrls above: the retry budget is the one thing a
+    // test of the retry logic has to be able to change.
+    /** Per-attempt ceiling. Overpass answers healthy queries in a few seconds. */
+    get overpassTimeoutMs(): number {
+      return int("OVERPASS_TIMEOUT_MS", 25_000);
+    },
+    /**
+     * Total attempts across all endpoints. Bounded so a public, volunteer-run
+     * service is never hammered on our behalf.
+     */
+    get overpassMaxAttempts(): number {
+      return int("OVERPASS_MAX_ATTEMPTS", 4);
+    },
+    /**
+     * Wall-clock budget for the whole discovery call. No new attempt starts
+     * once this is spent, so the request cannot outlive the serverless
+     * function waiting on it.
+     *
+     * The budget is split between the endpoints still to be tried, so it has
+     * to cover the slow case several times over: with four endpoints, 45s gave
+     * each attempt 11s, which cut off servers measured answering in 9.2s under
+     * load. 60s gives each 15s and matches what these servers actually do.
+     * Lower it to fit a shorter platform limit - Vercel Hobby functions stop
+     * at 10s - accepting that fewer endpoints will be reached.
+     */
+    get overpassDeadlineMs(): number {
+      return int("OVERPASS_DEADLINE_MS", 60_000);
+    },
     /** Google Places calls included in the monthly free allowance. */
     googleFreeCallsPerMonth: int("GOOGLE_PLACES_FREE_CALLS", 5_000),
   },
