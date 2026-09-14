@@ -132,6 +132,7 @@ export function CampaignWizard({
     start(async () => {
       const res = await launchCampaignAction({
         ...form,
+        providerId,
         area: form.area || null,
         keywords: form.keywords || null,
         minRating: form.minRating === "" ? null : Number(form.minRating),

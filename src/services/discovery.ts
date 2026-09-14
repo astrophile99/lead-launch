@@ -36,11 +36,11 @@ export type CampaignInput = {
   websiteFilter: "any" | "none" | "poor" | "good";
   keywords?: string | null;
   autoAudit: boolean;
+  providerId: string;
 };
 
 export async function createCampaign(workspaceId: string, input: CampaignInput) {
-  const settings = await getSettings(workspaceId);
-  const provider = getBusinessDataProvider(settings.discoveryProvider);
+  const provider = getBusinessDataProvider(input.providerId);
 
   if (input.targetCount < 1 || input.targetCount > 200) {
     throw new AppError({

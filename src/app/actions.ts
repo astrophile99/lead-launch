@@ -103,6 +103,7 @@ const campaignSchema = z.object({
   websiteFilter: z.enum(["any", "none", "poor", "good"]).default("any"),
   keywords: z.string().max(120).nullable().optional(),
   autoAudit: z.boolean().default(true),
+  providerId: z.string().min(1),
 });
 
 export async function launchCampaignAction(
