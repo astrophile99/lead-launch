@@ -61,8 +61,16 @@ async function chromeData() {
         jobsToday: spend.today.jobs,
       },
     };
-  } catch {
-    return { ok: false as const };
+  } catch (error) {
+    console.error("chromeData failed:", error);
+
+    return {
+      ok: false as const,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Unknown database error",
+    };
   }
 }
 
@@ -87,17 +95,18 @@ if (claimsError || !claimsData?.claims) {
   if (!data.ok) {
     return (
       <div className="h-full grid place-items-center px-6">
-        <div className="max-w-md text-center">
+        <div className="max-w-lg text-center">
           <h1 className="text-[18px] font-semibold mb-2">
-            Database not initialised
+            Dashboard data failed to load
           </h1>
 
-          <p className="text-[13px] text-ink-2 leading-relaxed">
-            No workspace was found. Run the migration and seed once, then reload:
+          <p className="text-[13px] text-ink-2 leading-relaxed mb-4">
+            The application could not load its workspace data. The actual error
+            is shown below.
           </p>
 
-          <pre className="mt-3 text-left text-[12px] bg-surface-2 border border-line rounded-md p-3 overflow-x-auto">
-            {"npm run db:migrate\nnpm run db:seed"}
+          <pre className="text-left text-[12px] bg-surface-2 border border-line rounded-md p-3 overflow-x-auto whitespace-pre-wrap">
+            {data.error}
           </pre>
         </div>
       </div>
