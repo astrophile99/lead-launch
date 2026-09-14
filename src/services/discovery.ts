@@ -36,11 +36,14 @@ export type CampaignInput = {
   websiteFilter: "any" | "none" | "poor" | "good";
   keywords?: string | null;
   autoAudit: boolean;
-  providerId: string;
+  providerId?: string | null;
 };
 
 export async function createCampaign(workspaceId: string, input: CampaignInput) {
-  const provider = getBusinessDataProvider(input.providerId);
+  const settings = await getSettings(workspaceId);
+  const provider = getBusinessDataProvider(
+    input.providerId || settings.discoveryProvider,
+  );
 
   if (input.targetCount < 1 || input.targetCount > 200) {
     throw new AppError({
@@ -91,6 +94,7 @@ export async function runCampaign(
   const campaign = await prisma.campaign.findFirst({
     where: { id: campaignId, workspaceId },
   });
+
   if (!campaign) {
     throw new AppError({
       kind: "not-found",
@@ -98,6 +102,7 @@ export async function runCampaign(
       remedy: "Refresh the campaign list.",
     });
   }
+
   if (campaign.status === "running") {
     throw new AppError({
       kind: "conflict",
@@ -107,6 +112,7 @@ export async function runCampaign(
   }
 
   const provider = getBusinessDataProvider(campaign.provider);
+
   const log = startJob("discovery.run", {
     campaignId,
     provider: provider.id,
@@ -115,7 +121,11 @@ export async function runCampaign(
 
   await prisma.campaign.update({
     where: { id: campaignId },
-    data: { status: "running", startedAt: new Date(), error: null },
+    data: {
+      status: "running",
+      startedAt: new Date(),
+      error: null,
+    },
   });
 
   const query: DiscoveryQuery = {
@@ -126,14 +136,16 @@ export async function runCampaign(
     limit: campaign.targetCount,
     minRating: campaign.minRating,
     minReviews: campaign.minReviews,
-    websiteFilter: campaign.websiteFilter as DiscoveryQuery["websiteFilter"],
+    websiteFilter:
+      campaign.websiteFilter as DiscoveryQuery["websiteFilter"],
     keywords: campaign.keywords,
   };
 
   let discovered = 0;
   let duplicates = 0;
+
   const createdProspectIds: string[] = [];
-  // Licence credit required by the source, carried through to the UI.
+
   let attribution: string | null = null;
   const providerNotes: string[] = [];
 
@@ -143,7 +155,13 @@ export async function runCampaign(
 
     while (discovered < campaign.targetCount && pages < 12) {
       const remaining = campaign.targetCount - discovered;
-      const result = await provider.search({ ...query, limit: remaining, cursor });
+
+      const result = await provider.search({
+        ...query,
+        limit: remaining,
+        cursor,
+      });
+
       pages++;
 
       // One counted request per page, so the Google free allowance is a number
@@ -157,9 +175,18 @@ export async function runCampaign(
 
       for (const record of result.records) {
         if (discovered >= campaign.targetCount) break;
-        const outcome = await persistRecord(workspaceId, campaignId, record, provider.id, provider.isMock);
-        if (outcome === "duplicate") duplicates++;
-        else {
+
+        const outcome = await persistRecord(
+          workspaceId,
+          campaignId,
+          record,
+          provider.id,
+          provider.isMock,
+        );
+
+        if (outcome === "duplicate") {
+          duplicates++;
+        } else {
           discovered++;
           createdProspectIds.push(outcome);
         }
@@ -167,26 +194,40 @@ export async function runCampaign(
 
       await prisma.campaign.update({
         where: { id: campaignId },
-        data: { discovered, duplicates, enriched: discovered },
+        data: {
+          discovered,
+          duplicates,
+          enriched: discovered,
+        },
       });
 
       attribution = result.attribution ?? attribution;
+
       for (const n of result.notes ?? []) {
-        if (!providerNotes.includes(n)) providerNotes.push(n);
+        if (!providerNotes.includes(n)) {
+          providerNotes.push(n);
+        }
       }
 
       cursor = result.nextCursor;
+
       if (!cursor) break;
     }
 
     let audited = 0;
+
     if (opts.autoAudit && createdProspectIds.length) {
-      const res = await auditMany(workspaceId, createdProspectIds, async (done) => {
-        await prisma.campaign.update({
-          where: { id: campaignId },
-          data: { audited: done },
-        });
-      });
+      const res = await auditMany(
+        workspaceId,
+        createdProspectIds,
+        async (done) => {
+          await prisma.campaign.update({
+            where: { id: campaignId },
+            data: { audited: done },
+          });
+        },
+      );
+
       audited = res.completed;
     }
 
@@ -205,9 +246,9 @@ export async function runCampaign(
     await logActivity({
       workspaceId,
       type: "prospect.discovered",
-      message: `Campaign "${campaign.name}" found ${discovered} new prospect${discovered === 1 ? "" : "s"}${
-        duplicates ? ` (${duplicates} already on file)` : ""
-      }.`,
+      message: `Campaign "${campaign.name}" found ${discovered} new prospect${
+        discovered === 1 ? "" : "s"
+      }${duplicates ? ` (${duplicates} already on file)` : ""}.`,
       meta: {
         campaignId,
         provider: provider.id,
@@ -228,7 +269,11 @@ export async function runCampaign(
       link: `/discover/${campaignId}`,
     });
 
-    log.done({ discovered, duplicates, audited });
+    log.done({
+      discovered,
+      duplicates,
+      audited,
+    });
 
     return {
       campaignId,
@@ -244,6 +289,7 @@ export async function runCampaign(
     };
   } catch (e) {
     const err = toAppError(e, "Retry the campaign.");
+
     await prisma.campaign.update({
       where: { id: campaignId },
       data: {
@@ -254,6 +300,7 @@ export async function runCampaign(
         completedAt: new Date(),
       },
     });
+
     await notify({
       workspaceId,
       type: "campaign.failed",
@@ -262,7 +309,9 @@ export async function runCampaign(
       level: "error",
       link: `/discover/${campaignId}`,
     });
+
     log.fail(err);
+
     throw err;
   }
 }
@@ -283,9 +332,15 @@ async function persistRecord(
   });
 
   const existing = await prisma.business.findUnique({
-    where: { workspaceId_dedupeKey: { workspaceId, dedupeKey: key } },
+    where: {
+      workspaceId_dedupeKey: {
+        workspaceId,
+        dedupeKey: key,
+      },
+    },
     select: { id: true },
   });
+
   if (existing) return "duplicate";
 
   const business = await prisma.business.create({
@@ -337,8 +392,14 @@ async function persistRecord(
       workspaceId,
       prospectId: prospect.id,
       type: "prospect.discovered",
-      message: `${record.name} discovered via ${source}${isMock ? " (demo data)" : ""}.`,
-      metaJson: toJson({ campaignId, source, isMock }),
+      message: `${record.name} discovered via ${source}${
+        isMock ? " (demo data)" : ""
+      }.`,
+      metaJson: toJson({
+        campaignId,
+        source,
+        isMock,
+      }),
     },
   });
 
@@ -349,8 +410,15 @@ export async function campaignProgress(
   workspaceId: string,
   campaignId: string,
 ): Promise<CampaignProgress | null> {
-  const c = await prisma.campaign.findFirst({ where: { id: campaignId, workspaceId } });
+  const c = await prisma.campaign.findFirst({
+    where: {
+      id: campaignId,
+      workspaceId,
+    },
+  });
+
   if (!c) return null;
+
   return {
     campaignId: c.id,
     status: c.status,
