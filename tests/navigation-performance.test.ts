@@ -129,6 +129,41 @@ describe("streaming and navigation", () => {
     expect(fs.existsSync(path.join(process.cwd(), "src/app/(app)/loading.tsx"))).toBe(true);
   });
 
+  it("gives the differently-shaped routes their own loading boundary", async () => {
+    // The shared boundary draws the Overview: four stat tiles above two
+    // panels. Prospects, Discover and the Studio have no tiles at all, and
+    // Settings, Account and Radar are a stack of panels - inheriting the
+    // Overview shape would show four boxes that are then replaced by
+    // something else, which reads as a glitch rather than as loading.
+    for (const route of ["prospects", "discover", "studio", "settings", "account", "radar"]) {
+      const file = path.join(process.cwd(), "src/app/(app)", route, "loading.tsx");
+      expect(fs.existsSync(file), `${route} has no loading boundary`).toBe(true);
+    }
+  });
+
+  it("draws a table for table routes and panels for panel routes", async () => {
+    const table = (await import("@/app/(app)/prospects/loading")).default;
+    const tableHtml = renderToStaticMarkup(createElement(table));
+    expect(tableHtml).toContain("skeleton");
+    expect(tableHtml).toContain('aria-busy="true"');
+
+    const panel = (await import("@/app/(app)/settings/loading")).default;
+    const panelHtml = renderToStaticMarkup(createElement(panel));
+    expect(panelHtml).toContain("skeleton");
+    // Neither shape draws the Overview's stat-tile row.
+    for (const html of [tableHtml, panelHtml]) {
+      expect(html).not.toContain("md:grid-cols-4");
+    }
+  });
+
+  it("shares one page-header shape between the loading states", () => {
+    // Two hand-written copies would drift the first time either is touched,
+    // and the hand-off is only invisible while the geometry matches.
+    const primitives = read("src/components/ui/primitives.tsx");
+    expect(primitives).toMatch(/export function SkeletonPageHeader/);
+    expect(read("src/app/(app)/loading.tsx")).toContain("SkeletonPageHeader");
+  });
+
   it("renders a skeleton rather than a spinner in a void", async () => {
     const Loading = (await import("@/app/(app)/loading")).default;
     const html = renderToStaticMarkup(createElement(Loading));
@@ -200,6 +235,19 @@ describe("query shape on the busiest route", () => {
     // round trips to a remote database for facts nothing depended on.
     const afterAll = body.slice(body.indexOf("]);"));
     expect(afterAll).not.toMatch(/await prisma\./);
+  });
+
+  it("derives the Overview's stage figures from one rollup", () => {
+    // The total, both stage counts and both value sums used to be five
+    // separate scans of the prospect table with different filters. They are
+    // all answerable from a single groupBy, and on a remote database the
+    // number of round trips is what a page costs.
+    const src = read("src/services/analytics.ts");
+    const body = src.slice(src.indexOf("export async function getOverview"));
+    const fn = body.slice(0, body.indexOf(String.fromCharCode(10) + "export "));
+    expect(fn).toMatch(/groupBy\(\{\s*by: \["stage"\]/);
+    expect(fn).not.toMatch(/prisma\.prospect\.aggregate/);
+    expect(fn).not.toMatch(/prisma\.prospect\.count\(\{ where: \{ workspaceId \} \}\)/);
   });
 
   it("issues the funnel's queries in one wave", () => {

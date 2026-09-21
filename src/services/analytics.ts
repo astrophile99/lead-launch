@@ -29,7 +29,7 @@ export async function getOverview(workspaceId: string): Promise<Overview> {
   const weekAgo = new Date(Date.now() - 7 * 86_400_000);
 
   const [
-    totalProspects,
+    byStage,
     newThisWeek,
     highOpportunity,
     websitesAudited,
@@ -39,13 +39,18 @@ export async function getOverview(workspaceId: string): Promise<Overview> {
     outreachDrafted,
     outreachSent,
     replies,
-    meetings,
-    won,
     mockProspects,
-    openValue,
-    wonValueAgg,
   ] = await Promise.all([
-    prisma.prospect.count({ where: { workspaceId } }),
+    // One rollup answers five of the figures below: the total, the two
+    // stage counts and both value sums. They used to be five separate scans
+    // of the same table with different filters, and on a remote database the
+    // count of round trips is what a page costs.
+    prisma.prospect.groupBy({
+      by: ["stage"],
+      where: { workspaceId },
+      _count: { _all: true },
+      _sum: { estimatedValue: true },
+    }),
     prisma.prospect.count({ where: { workspaceId, createdAt: { gte: weekAgo } } }),
     prisma.prospect.count({ where: { workspaceId, opportunityScore: { gte: 70 } } }),
     prisma.websiteAudit.count({ where: { prospect: { workspaceId }, status: "complete" } }),
@@ -57,20 +62,19 @@ export async function getOverview(workspaceId: string): Promise<Overview> {
       where: { prospect: { workspaceId }, status: { in: ["sent", "replied"] } },
     }),
     prisma.outreachMessage.count({ where: { prospect: { workspaceId }, status: "replied" } }),
-    prisma.prospect.count({
-      where: { workspaceId, stage: { in: ["meeting-scheduled", "meeting-completed"] } },
-    }),
-    prisma.prospect.count({ where: { workspaceId, stage: "won" } }),
     prisma.prospect.count({ where: { workspaceId, business: { isMock: true } } }),
-    prisma.prospect.aggregate({
-      where: { workspaceId, stage: { in: OPEN_STAGES } },
-      _sum: { estimatedValue: true },
-    }),
-    prisma.prospect.aggregate({
-      where: { workspaceId, stage: "won" },
-      _sum: { estimatedValue: true },
-    }),
   ]);
+
+  const stageCount = (stages: readonly string[]) =>
+    byStage.reduce((n, r) => (stages.includes(r.stage) ? n + r._count._all : n), 0);
+  const stageValue = (stages: readonly string[]) =>
+    byStage.reduce((n, r) => (stages.includes(r.stage) ? n + (r._sum.estimatedValue ?? 0) : n), 0);
+
+  const totalProspects = byStage.reduce((n, r) => n + r._count._all, 0);
+  const meetings = stageCount(["meeting-scheduled", "meeting-completed"]);
+  const won = stageCount(["won"]);
+  const pipelineValue = stageValue(OPEN_STAGES);
+  const wonValue = stageValue(["won"]);
 
   return {
     totalProspects,
@@ -85,8 +89,8 @@ export async function getOverview(workspaceId: string): Promise<Overview> {
     replies,
     meetings,
     won,
-    pipelineValue: openValue._sum.estimatedValue ?? 0,
-    wonValue: wonValueAgg._sum.estimatedValue ?? 0,
+    pipelineValue,
+    wonValue,
     mockProspects,
   };
 }

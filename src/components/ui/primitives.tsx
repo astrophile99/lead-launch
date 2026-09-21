@@ -463,6 +463,81 @@ export function SkeletonTiles({ count = 6 }: { count?: number }) {
   );
 }
 
+/**
+ * The header every dashboard route opens with, as a skeleton.
+ *
+ * Shared so the loading state and the real `PageHeader` keep the same
+ * geometry — the hand-off is only invisible if the shapes line up, and two
+ * hand-written copies would drift the first time either is touched.
+ */
+export function SkeletonPageHeader({ actions = 2 }: { actions?: number }) {
+  return (
+    <div
+      aria-hidden
+      className="flex flex-wrap items-start gap-x-6 gap-y-3 pb-4 mb-5 border-b border-line"
+    >
+      <div className="min-w-0 basis-full sm:basis-auto sm:flex-1">
+        <Skeleton className="h-5 w-52 sm:w-64" />
+        <Skeleton className="mt-2 h-3 w-full max-w-md" />
+      </div>
+      {actions > 0 ? (
+        <div className="flex items-center gap-2 sm:shrink-0">
+          {Array.from({ length: actions }, (_, i) => (
+            <Skeleton key={i} className={cn("h-7", i === 0 ? "w-24" : "w-20")} />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Loading shape for a route whose content is one wide table.
+ *
+ * Prospects, Discover and the Studio have no stat tiles at all, so the
+ * tile-and-panels shape used by the Overview would show four boxes that are
+ * then replaced by a table — a visible jump that reads as a glitch rather
+ * than as loading.
+ */
+export function SkeletonTablePage({ cols = 6, rows = 10 }: { cols?: number; rows?: number }) {
+  return (
+    <div aria-busy="true" aria-live="polite">
+      <span className="sr-only">Loading…</span>
+      <SkeletonPageHeader />
+      <Panel>
+        <div className="px-4 py-3 border-b border-line">
+          <Skeleton className="h-3 w-40" />
+        </div>
+        <SkeletonTable rows={rows} cols={cols} />
+      </Panel>
+    </div>
+  );
+}
+
+/**
+ * Loading shape for a route that is a stack of settings-style panels.
+ */
+export function SkeletonPanelPage({ panels = 3 }: { panels?: number }) {
+  return (
+    <div aria-busy="true" aria-live="polite">
+      <span className="sr-only">Loading…</span>
+      <SkeletonPageHeader actions={1} />
+      <div className="flex flex-col gap-5">
+        {Array.from({ length: panels }, (_, i) => (
+          <Panel key={i}>
+            <div className="px-4 py-3 border-b border-line">
+              <Skeleton className="h-3 w-36" />
+            </div>
+            <div className="px-4 py-3.5">
+              <SkeletonText lines={i === 0 ? 4 : 3} />
+            </div>
+          </Panel>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------------- table */
 
 export function Table({ className, ...rest }: ComponentPropsWithoutRef<"table">) {
