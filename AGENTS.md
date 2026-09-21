@@ -218,6 +218,27 @@ it, only `npm run build` will. A test now catches it too.
 `import type` is fine; it is erased. Shared constants belong in `src/config/`,
 and shared view types in `src/types/`.
 
+## Where this runs
+
+`vercel.json` pins Serverless Functions to `bom1` (Mumbai) because the Supabase
+database is in `ap-south-1` (Mumbai). Vercel's default is `iad1` (US-East),
+which put every query on a Virginia-to-Mumbai round trip — and a dashboard page
+issues dozens of them, so the distance was multiplied by the query count rather
+than paid once. Keep the two regions paired: if the database ever moves, move
+this with it, and if you add a second region, remember the database does not
+follow.
+
+This does not cover `proxy.ts`. Next.js middleware runs on the Edge runtime,
+deployed globally and close to the visitor, and `regions` does not apply to it.
+That is the right place for it — it is an auth check on every request, and the
+work it does is a JWT verification rather than a database read.
+
+Server render time here is dominated by round-trip latency, not by query
+complexity: the tables are small and the queries are indexed, so the cost of a
+page is roughly its number of round trips. That is why the services batch into
+one `Promise.all` wave rather than awaiting in sequence, and why request-scoped
+`cache()` on the workspace context and settings is worth more than it looks.
+
 ## Layout
 
 Grid and flex items default to `min-width: auto`, so a child with a long
