@@ -180,14 +180,68 @@ export async function getOpportunityFeed(workspaceId: string): Promise<Opportuni
   return feed.filter((f) => f.count > 0).sort((a, b) => b.count - a.count);
 }
 
+/*
+ * A funnel step must count everyone who reached it *or moved past it*, from
+ * either source of evidence: a message we actually sent, or a stage a person
+ * moved the prospect into. Counting only messages made the funnel widen
+ * further down, because a prospect can be advanced by hand after a phone call
+ * this app never saw.
+ *
+ * Module scope so the queries above can reference them.
+ */
+const CONTACTED_STAGES: PipelineStage[] = [
+  "contacted",
+  "responded",
+  "qualified",
+  "meeting-scheduled",
+  "meeting-completed",
+  "proposal",
+  "negotiation",
+  "won",
+  "lost",
+];
+
+const REPLIED_STAGES: PipelineStage[] = [
+  "responded",
+  "qualified",
+  "meeting-scheduled",
+  "meeting-completed",
+  "proposal",
+  "negotiation",
+  "won",
+];
+
 export type FunnelStep = { id: string; label: string; count: number; rate: number | null };
 
 export async function getFunnel(workspaceId: string): Promise<FunnelStep[]> {
-  const rows = await prisma.prospect.groupBy({
-    by: ["stage"],
-    where: { workspaceId },
-    _count: { _all: true },
-  });
+  // The stage rollup and the two evidence counts are independent, so they go
+  // out together. Awaiting them one at a time cost three serial round trips to
+  // a remote database for facts that never depended on each other.
+  const [rows, sentCount, repliedCount] = await Promise.all([
+    prisma.prospect.groupBy({
+      by: ["stage"],
+      where: { workspaceId },
+      _count: { _all: true },
+    }),
+    prisma.prospect.count({
+      where: {
+        workspaceId,
+        OR: [
+          { messages: { some: { status: { in: ["sent", "replied"] } } } },
+          { stage: { in: CONTACTED_STAGES } },
+        ],
+      },
+    }),
+    prisma.prospect.count({
+      where: {
+        workspaceId,
+        OR: [
+          { messages: { some: { status: "replied" } } },
+          { stage: { in: REPLIED_STAGES } },
+        ],
+      },
+    }),
+  ]);
   const byStage = new Map(rows.map((r) => [r.stage as PipelineStage, r._count._all]));
   const count = (stages: PipelineStage[]) =>
     stages.reduce((s, st) => s + (byStage.get(st) ?? 0), 0);
@@ -196,47 +250,6 @@ export async function getFunnel(workspaceId: string): Promise<FunnelStep[]> {
   const qualified = count(PIPELINE_STAGES.filter((s) => s !== "new") as PipelineStage[]);
 
   // A funnel step must count everyone who reached it *or moved past it*, from
-  // either source of evidence: a message we actually sent, or a stage a person
-  // moved the prospect into. Counting only messages made the funnel widen
-  // further down, because a prospect can be advanced by hand after a phone call
-  // that this app never saw.
-  const contactedStages: PipelineStage[] = [
-    "contacted",
-    "responded",
-    "qualified",
-    "meeting-scheduled",
-    "meeting-completed",
-    "proposal",
-    "negotiation",
-    "won",
-    "lost",
-  ];
-  const repliedStages: PipelineStage[] = [
-    "responded",
-    "qualified",
-    "meeting-scheduled",
-    "meeting-completed",
-    "proposal",
-    "negotiation",
-    "won",
-  ];
-
-  const sentCount = await prisma.prospect.count({
-    where: {
-      workspaceId,
-      OR: [
-        { messages: { some: { status: { in: ["sent", "replied"] } } } },
-        { stage: { in: contactedStages } },
-      ],
-    },
-  });
-  const repliedCount = await prisma.prospect.count({
-    where: {
-      workspaceId,
-      OR: [{ messages: { some: { status: "replied" } } }, { stage: { in: repliedStages } }],
-    },
-  });
-
   const steps: FunnelStep[] = [
     { id: "discovered", label: "Discovered", count: discovered, rate: null },
     { id: "researched", label: "Researched", count: qualified, rate: null },

@@ -522,6 +522,13 @@ model AIJob {
 
   @@index([workspaceId, status])
   @@index([entityType, entityId])
+  // The sidebar's spend figures aggregate this table by workspace over a date
+  // window on every navigation, and the AI and Settings screens filter it the
+  // same way. Nothing covered that: the two indexes above are for status
+  // lookups and entity back-references. AIJob is also the fastest-growing
+  // table here - one row per model call - so this is the one place where the
+  // access pattern and the growth curve both point the same way.
+  @@index([workspaceId, createdAt])
 }
 
 // ---------------------------------------------------------------- outreach + CRM

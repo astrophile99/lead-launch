@@ -1,4 +1,5 @@
 import { MODEL_CATALOG, type AIProviderId } from "@/config/ai";
+import { cache } from "react";
 import { prisma } from "@/db/client";
 import { round } from "@/lib/utils";
 
@@ -110,6 +111,58 @@ function startOf(days: number): Date {
   d.setDate(d.getDate() - days);
   return d;
 }
+
+/** What the sidebar and the Overview tile actually display. */
+export type ShellSpend = {
+  today: { jobs: number; costUsd: number | null };
+  month: { jobs: number; costUsd: number | null };
+};
+
+/**
+ * The spend figures the app chrome needs, and nothing else.
+ *
+ * The sidebar renders on every navigation, and it was calling
+ * `getSpendSummary` to do it - six queries, one of which pulls every AI job
+ * row from the last 30 days into memory purely to bucket them by provider and
+ * by task type, neither of which the chrome displays. Two aggregates give the
+ * same four numbers.
+ *
+ * The null semantics are the ones `summarise` uses, and they matter: a window
+ * whose jobs all ran unpriced reports `null`, not `0`. Counting a non-null
+ * column is how Prisma answers "was anything in this window priced at all",
+ * so the distinction survives the rewrite rather than collapsing to zero.
+ *
+ * The AI Control Center still calls `getSpendSummary` - it genuinely needs the
+ * breakdowns, and so does Settings, which reports token counts and failures.
+ *
+ * Memoized per request because the layout and the Overview page both display
+ * these numbers; without it they would each run the pair of aggregates.
+ * Nothing writes an AI job and then reads spend inside one request, so there
+ * is no write-then-read staleness to design around here.
+ */
+export const getShellSpend = cache(async function getShellSpend(
+  workspaceId: string,
+): Promise<ShellSpend> {
+  const [today, month] = await Promise.all([
+    prisma.aIJob.aggregate({
+      where: { workspaceId, createdAt: { gte: startOf(0) } },
+      _count: { _all: true, costUsd: true },
+      _sum: { costUsd: true },
+    }),
+    prisma.aIJob.aggregate({
+      where: { workspaceId, createdAt: { gte: startOf(30) } },
+      _count: { _all: true, costUsd: true },
+      _sum: { costUsd: true },
+    }),
+  ]);
+
+  const window = (agg: typeof today) => ({
+    jobs: agg._count._all,
+    costUsd: agg._count.costUsd > 0 ? round(agg._sum.costUsd ?? 0, 4) : null,
+  });
+
+  return { today: window(today), month: window(month) };
+});
 
 export async function getSpendSummary(workspaceId: string): Promise<SpendSummary> {
   const monthStart = startOf(30);

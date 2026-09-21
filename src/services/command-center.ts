@@ -75,6 +75,8 @@ export async function getCommandCenter(workspaceId: string) {
     failedSends,
     unaudited,
     noOwnerHot,
+    drafts,
+    approvedUnsent,
   ] = await Promise.all([
     prisma.prospect.count({ where: { workspaceId, createdAt: { gte: newCutoff } } }),
 
@@ -121,9 +123,25 @@ export async function getCommandCenter(workspaceId: string) {
       where: { project: { workspaceId } },
       orderBy: { startedAt: "desc" },
       take: 6,
-      include: {
-        project: { include: { prospect: { include: { business: true } } } },
-        versions: { orderBy: { version: "desc" }, take: 1 },
+      // The queue shows a business name; the nested `include` was loading
+      // whole project, prospect and business rows to reach it.
+      select: {
+        id: true,
+        projectId: true,
+        status: true,
+        strategy: true,
+        provider: true,
+        model: true,
+        quality: true,
+        startedAt: true,
+        completedAt: true,
+        qualityScore: true,
+        project: { select: { prospect: { select: { business: { select: { name: true } } } } } },
+        versions: {
+          orderBy: { version: "desc" },
+          take: 1,
+          select: { id: true, version: true, approval: true },
+        },
       },
     }),
 
@@ -142,14 +160,18 @@ export async function getCommandCenter(workspaceId: string) {
     prisma.prospect.count({
       where: { workspaceId, opportunityScore: { gte: 80 }, messages: { none: {} } },
     }),
+
+    // These two used to be awaited one after the other, below this block.
+    // Nothing depended on the results above them, so all they bought was two
+    // more serial round trips to a remote database on the critical path.
+    prisma.outreachMessage.count({
+      where: { prospect: { workspaceId }, status: "draft" },
+    }),
+    prisma.outreachMessage.count({
+      where: { prospect: { workspaceId }, status: "approved" },
+    }),
   ]);
 
-  const drafts = await prisma.outreachMessage.count({
-    where: { prospect: { workspaceId }, status: "draft" },
-  });
-  const approvedUnsent = await prisma.outreachMessage.count({
-    where: { prospect: { workspaceId }, status: "approved" },
-  });
 
   const today: TodayCounts = {
     newLeads,

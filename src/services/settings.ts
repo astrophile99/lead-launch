@@ -1,5 +1,6 @@
 import { DEFAULT_SCORING_WEIGHTS, type ScoringWeights } from "@/config/scoring";
 import type { CostMode } from "@/config/ai";
+import { cache } from "react";
 import { prisma } from "@/db/client";
 import { fromJson, toJson } from "@/lib/json";
 
@@ -78,7 +79,12 @@ const KEY_BY_FIELD: Record<keyof WorkspaceSettings, string> = {
   dismissedSetupSteps: "setup.dismissed",
 };
 
-export async function getSettings(workspaceId: string): Promise<WorkspaceSettings> {
+/**
+ * Reads settings straight from the database, bypassing the request memo.
+ *
+ * Exists so a write can read its own result. See `getSettings` below.
+ */
+async function loadSettings(workspaceId: string): Promise<WorkspaceSettings> {
   const rows = await prisma.setting.findMany({ where: { workspaceId } });
   const map = new Map(rows.map((r) => [r.key, r.valueJson]));
   const read = <K extends keyof WorkspaceSettings>(field: K): WorkspaceSettings[K] =>
@@ -105,6 +111,23 @@ export async function getSettings(workspaceId: string): Promise<WorkspaceSetting
   };
 }
 
+/**
+ * Settings for the current render, resolved once per request.
+ *
+ * The app layout reads these for the sidebar budget and most pages read them
+ * again, so a navigation used to run the same query two or three times.
+ *
+ * `cache()` is request-scoped, which is the only scope that is safe here:
+ * settings are per-workspace data, and a cache that outlived the request
+ * would be a cache that could serve one workspace's configuration to another.
+ * It also means a mutation is visible on the very next request, with no
+ * invalidation to remember.
+ *
+ * Within a single request a write must still see its own result, so
+ * `updateSettings` deliberately returns `loadSettings` rather than this.
+ */
+export const getSettings = cache(loadSettings);
+
 export async function updateSettings(
   workspaceId: string,
   patch: Partial<WorkspaceSettings>,
@@ -119,5 +142,7 @@ export async function updateSettings(
       update: { valueJson: toJson(value) },
     });
   }
-  return getSettings(workspaceId);
+  // Not `getSettings`: that memo was populated before these writes landed, so
+  // returning it here would hand the caller back the values it just replaced.
+  return loadSettings(workspaceId);
 }

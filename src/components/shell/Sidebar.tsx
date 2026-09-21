@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { NavPending } from "./NavPending";
 import { usePathname } from "next/navigation";
 import { NAV, NAV_GROUPS } from "@/config/nav";
 import { cn, formatCurrency } from "@/lib/utils";
@@ -104,8 +105,11 @@ export function Sidebar({
                           className={cn("size-3.5 shrink-0", active ? "text-accent" : "text-ink-4")}
                         />
                         <span className="truncate">{item.label}</span>
+                        {/* Sits where the count badge sits, so a pending row
+                            is the same height as a settled one. */}
+                        <NavPending className="ml-auto" />
                         {count > 0 ? (
-                          <span className="tabular ml-auto text-[10.5px] text-ink-3 bg-surface-2 border border-line rounded-sm px-1 leading-4">
+                          <span className="tabular ml-auto text-[10.5px] text-ink-3 bg-surface-2 border border-line rounded-sm px-1 leading-4 [&:not(:first-child)]:ml-1">
                             {count}
                           </span>
                         ) : null}

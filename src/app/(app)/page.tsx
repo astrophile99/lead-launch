@@ -4,7 +4,7 @@ import { prisma } from "@/db/client";
 import { getWorkspaceContext } from "@/db/workspace";
 import { formatCurrency, formatNumber, relativeTime } from "@/lib/utils";
 import { getOpportunityFeed, getOverview } from "@/services/analytics";
-import { evaluateBudget, getSpendSummary } from "@/services/costs";
+import { evaluateBudget, getShellSpend } from "@/services/costs";
 import { getSetupSteps } from "@/services/integrations";
 import { listJobs } from "@/services/jobs";
 import { getSettings } from "@/services/settings";
@@ -66,7 +66,15 @@ export default async function OverviewPage() {
           where: { workspaceId, status: "open" },
           orderBy: [{ dueAt: "asc" }],
           take: 7,
-          include: { prospect: { include: { business: { select: { name: true } } } } },
+          // `include` on prospect pulled every column of a row this list only
+          // borrows a business name from.
+          select: {
+            id: true,
+            title: true,
+            dueAt: true,
+            prospectId: true,
+            prospect: { select: { business: { select: { name: true } } } },
+          },
         })
         // Overdue is decided here, against the clock at fetch time, rather than
         // during render - render stays a pure function of its inputs.
@@ -77,10 +85,27 @@ export default async function OverviewPage() {
         where: { workspaceId, opportunityScore: { not: null } },
         orderBy: { opportunityScore: "desc" },
         take: 5,
-        include: { business: true },
+        // Seven business columns are rendered; `include` fetched all of them,
+        // including the stored JSON blobs for hours, services and images.
+        select: {
+          id: true,
+          websiteScore: true,
+          opportunityScore: true,
+          business: {
+            select: {
+              name: true,
+              category: true,
+              area: true,
+              city: true,
+              rating: true,
+              reviewCount: true,
+              website: true,
+            },
+          },
+        },
       }),
       getSetupSteps(workspaceId),
-      getSpendSummary(workspaceId),
+      getShellSpend(workspaceId),
       getSettings(workspaceId),
       getCommandCenter(workspaceId),
     ]);

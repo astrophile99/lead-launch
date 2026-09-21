@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { NavPending } from "./NavPending";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { MOBILE_MORE, MOBILE_PRIMARY, NAV } from "@/config/nav";
@@ -74,8 +75,13 @@ export function MobileNav({
                     active ? "text-accent" : "text-ink-3",
                   )}
                 >
-                  <span className="relative">
-                    <NavIcon name={item.icon} className="size-[18px]" />
+                  <span className="relative grid place-items-center size-[18px]">
+                    {/* The spinner replaces the icon rather than joining it:
+                        the bar is a fixed five-column grid, so anything that
+                        adds width here shifts every other tab. */}
+                    <NavPending className="size-[15px]">
+                      <NavIcon name={item.icon} className="size-[18px]" />
+                    </NavPending>
                     {count > 0 ? (
                       <span className="tabular absolute -top-1 -right-2 min-w-3.5 h-3.5 px-0.5 rounded-full bg-accent text-accent-ink text-[9px] leading-[14px] text-center">
                         {count > 99 ? "99+" : count}
@@ -161,10 +167,12 @@ export function MobileNav({
                         active ? "bg-surface-3 text-ink" : "text-ink-2 active:bg-surface-2",
                       )}
                     >
-                      <NavIcon
-                        name={item.icon}
-                        className={cn("size-4 shrink-0", active ? "text-accent" : "text-ink-4")}
-                      />
+                      <NavPending className="size-4">
+                        <NavIcon
+                          name={item.icon}
+                          className={cn("size-4 shrink-0", active ? "text-accent" : "text-ink-4")}
+                        />
+                      </NavPending>
                       <span className="min-w-0 flex-1">
                         <span className="block text-[13px] font-medium truncate">{item.label}</span>
                         <span className="block text-[11px] text-ink-4 truncate">
